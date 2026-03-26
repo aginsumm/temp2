@@ -1,0 +1,159 @@
+个人文档/
+
+# Node.js
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+.tox/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.example.bak
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
+
+# Docker
+*.log
+docker-compose.override.yml
+
+# OS
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+Desktop.ini
+
+# Build outputs
+dist/
+build/
+*.tgz
+output/
+coverage/
+.nyc_output/
+
+# Logs
+logs/
+*.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.nyc_output/
+
+# Cache
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.vuepress/dist/
+.serverless/
+.fusebox/
+.dynamodb/
+.tern-port
+
+# Misc
+*.pid
+*.seed
+*.pid.lock
+.env.backup
+.env.local.backup
+.env.development.backup
+.env.production.backup
+
+# TypeScript
+*.tsbuildinfo
+
+# ESLint & Prettier
+.eslintcache
+.prettiercache
+
+# Temporary files
+*.temp
+*.tmp
+*.swp
+*.swo
+*~
+
+# Lock files (optional - uncomment if you want to ignore them)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+
+# Backup files
+*.backup
+*.bak
+*.old
+
+# Fonts
+frontend/public/fonts/
+**/fonts/*.ttf
+**/fonts/*.otf
+**/fonts/*.woff
+**/fonts/*.woff2
+*.ttf
+*.otf
+*.woff
+*.woff2
+
+# Backend specific
+celerybeat-schedule
+celerybeat.pid
+*.db-shm
+*.db-wal
+instance/
+data/
+uploads/
+media/
+staticfiles/
