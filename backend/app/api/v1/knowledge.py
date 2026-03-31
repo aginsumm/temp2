@@ -7,18 +7,25 @@ from app.services.knowledge_service import KnowledgeService
 from app.schemas.knowledge import (
     EntityCreate,
     EntityUpdate,
-    Entity,
     RelationshipCreate,
+    RelationshipUpdate,
     Relationship,
     GraphData,
     GraphNode,
     GraphEdge,
     SearchRequest,
     SearchResponse,
+    AdvancedSearchRequest,
     EntityDetailResponse,
     PathRequest,
     PathResponse,
     StatsResponse,
+    FavoriteCreate,
+    Favorite,
+    FeedbackCreate,
+    Feedback,
+    ExportRequest,
+    ImportRequest,
 )
 
 router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
@@ -90,6 +97,25 @@ async def search_entities(
     )
 
 
+@router.post("/search/advanced", response_model=SearchResponse, summary="高级搜索实体")
+async def advanced_search_entities(
+    search_request: AdvancedSearchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    entities, total = await service.advanced_search_entities(search_request)
+
+    total_pages = (total + search_request.page_size - 1) // search_request.page_size
+
+    return SearchResponse(
+        results=entities,
+        total=total,
+        page=search_request.page,
+        page_size=search_request.page_size,
+        total_pages=total_pages,
+    )
+
+
 @router.get(
     "/entity/{entity_id}/detail",
     response_model=EntityDetailResponse,
@@ -136,6 +162,43 @@ async def create_relationship(
     service = KnowledgeService(db)
     relationship = await service.create_relationship(relationship_data)
     return relationship
+
+
+@router.get("/relationship/{relationship_id}", response_model=Relationship, summary="获取关系详情")
+async def get_relationship(
+    relationship_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    relationship = await service.get_relationship(relationship_id)
+    if not relationship:
+        raise HTTPException(status_code=404, detail="关系不存在")
+    return relationship
+
+
+@router.put("/relationship/{relationship_id}", response_model=Relationship, summary="更新关系")
+async def update_relationship(
+    relationship_id: str,
+    update_data: RelationshipUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    relationship = await service.update_relationship(relationship_id, update_data)
+    if not relationship:
+        raise HTTPException(status_code=404, detail="关系不存在")
+    return relationship
+
+
+@router.delete("/relationship/{relationship_id}", summary="删除关系")
+async def delete_relationship(
+    relationship_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    success = await service.delete_relationship(relationship_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="关系不存在")
+    return {"success": True}
 
 
 @router.get("/graph", response_model=GraphData, summary="获取图谱数据")
@@ -307,3 +370,132 @@ async def get_periods(
     )
     periods = [row[0] for row in result.all() if row[0]]
     return periods
+
+
+@router.post("/favorite", response_model=Favorite, summary="添加收藏")
+async def add_favorite(
+    favorite_data: FavoriteCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    try:
+        favorite = await service.add_favorite(favorite_data)
+        return favorite
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/favorite", summary="取消收藏")
+async def remove_favorite(
+    user_id: str = Query(..., description="用户ID"),
+    entity_id: str = Query(..., description="实体ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    success = await service.remove_favorite(user_id, entity_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="收藏不存在")
+    return {"success": True}
+
+
+@router.get("/favorite/{user_id}", response_model=List[Favorite], summary="获取用户收藏列表")
+async def get_user_favorites(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    favorites = await service.get_user_favorites(user_id)
+    return favorites
+
+
+@router.get("/favorite/check", summary="检查是否已收藏")
+async def check_favorite(
+    user_id: str = Query(..., description="用户ID"),
+    entity_id: str = Query(..., description="实体ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    is_favorite = await service.check_favorite(user_id, entity_id)
+    return {"is_favorite": is_favorite}
+
+
+@router.post("/feedback", response_model=Feedback, summary="提交反馈")
+async def add_feedback(
+    feedback_data: FeedbackCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    feedback = await service.add_feedback(feedback_data)
+    return feedback
+
+
+@router.get("/feedback/entity/{entity_id}", response_model=List[Feedback], summary="获取实体的反馈列表")
+async def get_entity_feedbacks(
+    entity_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    feedbacks = await service.get_entity_feedbacks(entity_id)
+    return feedbacks
+
+
+@router.get("/feedback/user/{user_id}", response_model=List[Feedback], summary="获取用户的反馈列表")
+async def get_user_feedbacks(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    feedbacks = await service.get_user_feedbacks(user_id)
+    return feedbacks
+
+
+@router.get("/analysis/connectivity", summary="分析图谱连通性")
+async def analyze_graph_connectivity(
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    connectivity = await service.analyze_graph_connectivity()
+    return connectivity
+
+
+@router.get("/analysis/centrality/{entity_id}", summary="分析实体中心性")
+async def analyze_entity_centrality(
+    entity_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    entity = await service.get_entity(entity_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="实体不存在")
+    
+    centrality = await service.analyze_entity_centrality(entity_id)
+    return centrality
+
+
+@router.get("/analysis/community", summary="分析社区结构")
+async def analyze_community_structure(
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    community = await service.analyze_community_structure()
+    return community
+
+
+@router.post("/export", summary="导出图谱数据")
+async def export_data(
+    export_request: ExportRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    data = await service.export_data(export_request)
+    return data
+
+
+@router.post("/import", summary="导入图谱数据")
+async def import_data(
+    import_request: ImportRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    service = KnowledgeService(db)
+    result = await service.import_data(import_request)
+    return result

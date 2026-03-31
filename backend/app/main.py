@@ -5,7 +5,7 @@ import uvicorn
 
 from app.core.config import settings
 from app.core.database import init_db
-from app.api.v1 import chat, knowledge
+from app.api.v1 import chat, knowledge, favorite
 from app.models import chat as chat_models
 from app.models import knowledge as knowledge_models
 
@@ -33,6 +33,7 @@ app.add_middleware(
 
 app.include_router(chat.router, tags=["chat"])
 app.include_router(knowledge.router, tags=["knowledge"])
+app.include_router(favorite.router, tags=["favorites"])
 
 
 @app.get("/")

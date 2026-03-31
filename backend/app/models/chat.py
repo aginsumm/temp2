@@ -42,7 +42,6 @@ class Message(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     feedback = Column(String(20), nullable=True)
-    is_favorite = Column(Boolean, default=False)
 
     session = relationship("Session", back_populates="messages")
     sources = relationship("MessageSource", back_populates="message", cascade="all, delete-orphan")
@@ -106,3 +105,17 @@ class FavoriteQuestion(Base):
 
     def __repr__(self):
         return f"<FavoriteQuestion {self.id}: {self.question[:30]}>"
+
+
+class MessageFavorite(Base):
+    __tablename__ = "message_favorites"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), nullable=False, index=True)
+    message_id = Column(String(36), ForeignKey("messages.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    message = relationship("Message")
+
+    def __repr__(self):
+        return f"<MessageFavorite {self.id}: user={self.user_id}, message={self.message_id}>"
