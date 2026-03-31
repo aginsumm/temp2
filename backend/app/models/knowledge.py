@@ -52,3 +52,15 @@ class Favorite(Base):
     user_id = Column(String, index=True)
     entity_id = Column(String, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Feedback(Base):
+    __tablename__ = "feedbacks"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, index=True)
+    entity_id = Column(String, index=True)
+    feedback_type = Column(String(50), nullable=False)
+    content = Column(Text)
+    rating = Column(Integer)
+    created_at = Column(DateTime, default=datetime.utcnow)

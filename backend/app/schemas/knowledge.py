@@ -49,6 +49,14 @@ class RelationshipCreate(RelationshipBase):
     pass
 
 
+class RelationshipUpdate(BaseModel):
+    source_id: Optional[str] = None
+    target_id: Optional[str] = None
+    relation_type: Optional[str] = None
+    weight: Optional[float] = None
+    meta_data: Optional[Dict[str, Any]] = None
+
+
 class Relationship(RelationshipBase):
     id: str
     created_at: datetime
@@ -87,6 +95,20 @@ class SearchRequest(BaseModel):
     page: int = Field(1, ge=1, description="页码")
     page_size: int = Field(20, ge=1, le=100, description="每页数量")
     sort_by: str = Field("relevance", description="排序方式")
+    fuzzy: bool = Field(False, description="是否启用模糊搜索")
+
+
+class AdvancedSearchRequest(BaseModel):
+    keyword: Optional[str] = Field(None, description="搜索关键词")
+    categories: Optional[List[str]] = Field(None, description="实体类型筛选（多选）")
+    regions: Optional[List[str]] = Field(None, description="地域筛选（多选）")
+    periods: Optional[List[str]] = Field(None, description="时期筛选（多选）")
+    min_importance: Optional[float] = Field(None, ge=0.0, le=1.0, description="最小重要性")
+    max_importance: Optional[float] = Field(None, ge=0.0, le=1.0, description="最大重要性")
+    page: int = Field(1, ge=1, description="页码")
+    page_size: int = Field(20, ge=1, le=100, description="每页数量")
+    sort_by: str = Field("relevance", description="排序方式")
+    fuzzy: bool = Field(True, description="是否启用模糊搜索")
 
 
 class SearchResponse(BaseModel):
@@ -120,3 +142,50 @@ class StatsResponse(BaseModel):
     entities_by_type: Dict[str, int]
     relationships_by_type: Dict[str, int]
     top_entities: List[Dict[str, Any]]
+
+
+class FavoriteCreate(BaseModel):
+    user_id: str = Field(..., description="用户ID")
+    entity_id: str = Field(..., description="实体ID")
+
+
+class Favorite(BaseModel):
+    id: str
+    user_id: str
+    entity_id: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class FeedbackCreate(BaseModel):
+    user_id: str = Field(..., description="用户ID")
+    entity_id: str = Field(..., description="实体ID")
+    feedback_type: str = Field(..., description="反馈类型")
+    content: Optional[str] = Field(None, description="反馈内容")
+    rating: Optional[int] = Field(None, ge=1, le=5, description="评分")
+
+
+class Feedback(BaseModel):
+    id: str
+    user_id: str
+    entity_id: str
+    feedback_type: str
+    content: Optional[str]
+    rating: Optional[int]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ExportRequest(BaseModel):
+    format: str = Field("json", description="导出格式：json/csv")
+    include_entities: bool = Field(True, description="是否包含实体")
+    include_relationships: bool = Field(True, description="是否包含关系")
+
+
+class ImportRequest(BaseModel):
+    format: str = Field("json", description="导入格式：json/csv")
+    data: Dict[str, Any] = Field(..., description="导入数据")

@@ -5,6 +5,7 @@ from typing import Optional
 import json
 
 from app.core.database import get_db
+from app.core.auth import get_current_user, get_optional_user
 from app.schemas.chat import (
     ChatMessageRequest,
     ChatMessageResponse,
@@ -28,15 +29,11 @@ from app.models.chat import MessageRole
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 
-def get_mock_user_id():
-    return "default_user"
-
-
 @router.post("/chat/message", response_model=ChatMessageResponse)
 async def send_message(
     request: ChatMessageRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_mock_user_id),
+    user_id: str = Depends(get_current_user),
 ):
     session_service = SessionService(db)
     message_service = MessageService(db)
@@ -99,7 +96,7 @@ async def send_message(
 async def send_message_stream(
     request: ChatMessageRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_mock_user_id),
+    user_id: str = Depends(get_current_user),
 ):
     session_service = SessionService(db)
     message_service = MessageService(db)
@@ -187,7 +184,7 @@ async def list_sessions(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_mock_user_id),
+    user_id: str = Depends(get_current_user),
 ):
     session_service = SessionService(db)
     sessions, total = await session_service.get_user_sessions(user_id, page, page_size)
@@ -204,7 +201,7 @@ async def list_sessions(
 async def create_session(
     data: SessionCreate,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_mock_user_id),
+    user_id: str = Depends(get_current_user),
 ):
     session_service = SessionService(db)
     session = await session_service.create_session(user_id, data)
