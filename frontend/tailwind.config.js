@@ -1,8 +1,37 @@
 export default {
+  darkMode: 'class',
   content: ["./index.html", "./src/**/*.{js,jsx,ts,tsx}"],
   theme: {
     extend: {
       colors: {
+        heritage: {
+          primary: 'var(--color-primary)',
+          'primary-hover': 'var(--color-primary-hover)',
+          'primary-light': 'var(--color-primary-light)',
+          'primary-dark': 'var(--color-primary-dark)',
+          secondary: 'var(--color-secondary)',
+          'secondary-hover': 'var(--color-secondary-hover)',
+          accent: 'var(--color-accent)',
+          'accent-hover': 'var(--color-accent-hover)',
+          background: 'var(--color-background)',
+          'background-secondary': 'var(--color-background-secondary)',
+          'background-tertiary': 'var(--color-background-tertiary)',
+          surface: 'var(--color-surface)',
+          'surface-hover': 'var(--color-surface-hover)',
+          text: {
+            primary: 'var(--color-text-primary)',
+            secondary: 'var(--color-text-secondary)',
+            muted: 'var(--color-text-muted)',
+            inverse: 'var(--color-text-inverse)',
+          },
+          border: 'var(--color-border)',
+          'border-light': 'var(--color-border-light)',
+          'border-focus': 'var(--color-border-focus)',
+          success: 'var(--color-success)',
+          warning: 'var(--color-warning)',
+          error: 'var(--color-error)',
+          info: 'var(--color-info)',
+        },
         wood: {
           deep: "#5d4037",
           medium: "#8d6e63",
@@ -26,15 +55,6 @@ export default {
           light: "#f4e5b2",
           dark: "#aa8c2c",
         },
-        slate: {
-          gray: "#708090",
-        },
-        indian: {
-          red: "#cd5c5c",
-        },
-        dark: {
-          slate: "#2f4f4f",
-        },
         entity: {
           inheritor: "#8B5CF6",
           technique: "#10B981",
@@ -46,9 +66,9 @@ export default {
         },
       },
       fontFamily: {
-        heading: ['"Noto Serif SC"', '"Source Han Serif SC"', '"Songti SC"', "serif"],
-        body: ['"Noto Sans SC"', '"PingFang SC"', '"Microsoft YaHei"', "sans-serif"],
-        mono: ['"Fira Code"', '"SF Mono"', "Monaco", '"Courier New"', "monospace"],
+        heading: ['var(--font-heading)', '"Noto Serif SC"', '"Source Han Serif SC"', '"Songti SC"', "serif"],
+        body: ['var(--font-body)', '"Noto Sans SC"', '"PingFang SC"', '"Microsoft YaHei"', "sans-serif"],
+        mono: ['var(--font-mono)', '"Fira Code"', '"SF Mono"', "Monaco", '"Courier New"', "monospace"],
       },
       fontSize: {
         xs: "12px",
@@ -71,17 +91,16 @@ export default {
         "3xl": "64px",
       },
       boxShadow: {
-        sm: "0 2px 8px rgba(0, 0, 0, 0.08)",
-        md: "0 4px 16px rgba(0, 0, 0, 0.12)",
-        lg: "0 8px 24px rgba(0, 0, 0, 0.16)",
-        xl: "0 12px 32px rgba(0, 0, 0, 0.20)",
-        "2xl": "0 16px 48px rgba(0, 0, 0, 0.24)",
-        inner: "inset 0 2px 4px rgba(0, 0, 0, 0.06)",
-        "glow-gold": "0 0 20px rgba(218, 165, 32, 0.3)",
-        "glow-blue": "0 0 30px rgba(59, 130, 246, 0.5)",
-        node: "0 4px 12px rgba(59, 130, 246, 0.3)",
-        "node-hover": "0 8px 24px rgba(59, 130, 246, 0.5)",
-        bubble: "0 4px 12px rgba(139, 69, 19, 0.15)",
+        sm: "0 2px 8px var(--color-shadow)",
+        md: "0 4px 16px var(--color-shadow)",
+        lg: "0 8px 24px var(--color-shadow)",
+        xl: "0 12px 32px var(--color-shadow)",
+        "2xl": "0 16px 48px var(--color-shadow)",
+        inner: "inset 0 2px 4px var(--color-shadow)",
+        glow: "0 0 20px var(--color-shadow-glow)",
+        "glow-lg": "0 0 40px var(--color-shadow-glow)",
+        heritage: "var(--color-shadow)",
+        "heritage-glow": "var(--color-shadow-glow)",
       },
       borderRadius: {
         sm: "4px",
@@ -91,6 +110,13 @@ export default {
         "2xl": "20px",
         "3xl": "24px",
       },
+      backgroundImage: {
+        'heritage-primary': 'var(--gradient-primary)',
+        'heritage-secondary': 'var(--gradient-secondary)',
+        'heritage-accent': 'var(--gradient-accent)',
+        'heritage-bg': 'var(--gradient-background)',
+        'heritage-card': 'var(--gradient-card)',
+      },
       animation: {
         "fade-in": "fadeIn 0.3s ease-out",
         "slide-in": "slideIn 0.3s ease-out",
@@ -99,6 +125,9 @@ export default {
         "bounce-in": "bounceIn 0.3s ease-out",
         "node-enter": "nodeEnter 0.5s ease-out",
         "draw-line": "drawLine 1s ease-out forwards",
+        "shimmer": "shimmer 2s linear infinite",
+        "float": "float 3s ease-in-out infinite",
+        "pulse-glow": "pulseGlow 2s ease-in-out infinite",
       },
       keyframes: {
         fadeIn: {
@@ -131,6 +160,18 @@ export default {
         drawLine: {
           "0%": { strokeDashoffset: "1000" },
           "100%": { strokeDashoffset: "0" },
+        },
+        shimmer: {
+          "0%": { backgroundPosition: "-200% 0" },
+          "100%": { backgroundPosition: "200% 0" },
+        },
+        float: {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-10px)" },
+        },
+        pulseGlow: {
+          "0%, 100%": { boxShadow: "0 0 20px var(--color-shadow-glow)" },
+          "50%": { boxShadow: "0 0 40px var(--color-shadow-glow)" },
         },
       },
       transitionDuration: {

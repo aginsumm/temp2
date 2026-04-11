@@ -1,39 +1,36 @@
-import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
-type Theme = "light" | "dark";
-type FontSize = "small" | "medium" | "large";
+type FontSize = 'small' | 'medium' | 'large';
 
 interface UIState {
   sidebarCollapsed: boolean;
   rightPanelCollapsed: boolean;
   sidebarWidth: number;
   rightPanelWidth: number;
-  theme: Theme;
   fontSize: FontSize;
   showSourcePanel: boolean;
   showSettings: boolean;
   apiConnected: boolean;
-  
+
   toggleSidebar: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   toggleRightPanel: () => void;
   setRightPanelCollapsed: (collapsed: boolean) => void;
   setSidebarWidth: (width: number) => void;
   setRightPanelWidth: (width: number) => void;
-  setTheme: (theme: Theme) => void;
   setFontSize: (size: FontSize) => void;
   toggleSourcePanel: () => void;
   toggleSettings: () => void;
   setApiConnected: (connected: boolean) => void;
 }
 
-const MIN_SIDEBAR_WIDTH = 200;
-const MAX_SIDEBAR_WIDTH = 400;
-const MIN_RIGHT_PANEL_WIDTH = 240;
-const MAX_RIGHT_PANEL_WIDTH = 480;
-const DEFAULT_SIDEBAR_WIDTH = 280;
-const DEFAULT_RIGHT_PANEL_WIDTH = 320;
+const MIN_SIDEBAR_WIDTH = 180;
+const MAX_SIDEBAR_WIDTH = 360;
+const MIN_RIGHT_PANEL_WIDTH = 220;
+const MAX_RIGHT_PANEL_WIDTH = 400;
+const DEFAULT_SIDEBAR_WIDTH = 240;
+const DEFAULT_RIGHT_PANEL_WIDTH = 280;
 
 export const useUIStore = create<UIState>()(
   persist(
@@ -42,8 +39,7 @@ export const useUIStore = create<UIState>()(
       rightPanelCollapsed: false,
       sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
       rightPanelWidth: DEFAULT_RIGHT_PANEL_WIDTH,
-      theme: "light",
-      fontSize: "medium",
+      fontSize: 'medium',
       showSourcePanel: false,
       showSettings: false,
       apiConnected: true,
@@ -70,21 +66,19 @@ export const useUIStore = create<UIState>()(
       },
 
       setRightPanelWidth: (width) => {
-        const clampedWidth = Math.min(MAX_RIGHT_PANEL_WIDTH, Math.max(MIN_RIGHT_PANEL_WIDTH, width));
+        const clampedWidth = Math.min(
+          MAX_RIGHT_PANEL_WIDTH,
+          Math.max(MIN_RIGHT_PANEL_WIDTH, width)
+        );
         set({ rightPanelWidth: clampedWidth });
-      },
-
-      setTheme: (theme) => {
-        set({ theme });
-        document.documentElement.setAttribute("data-theme", theme);
       },
 
       setFontSize: (fontSize) => {
         set({ fontSize });
         const sizeMap = {
-          small: "14px",
-          medium: "16px",
-          large: "18px",
+          small: '14px',
+          medium: '16px',
+          large: '18px',
         };
         document.documentElement.style.fontSize = sizeMap[fontSize];
       },
@@ -102,20 +96,16 @@ export const useUIStore = create<UIState>()(
       },
     }),
     {
-      name: "ui-storage",
+      name: 'ui-storage',
       partialize: (state) => ({
         sidebarWidth: state.sidebarWidth,
         rightPanelWidth: state.rightPanelWidth,
-        theme: state.theme,
         fontSize: state.fontSize,
       }),
     }
   )
 );
 
-export { 
-  MIN_SIDEBAR_WIDTH, 
-  MAX_SIDEBAR_WIDTH, 
-  MIN_RIGHT_PANEL_WIDTH, 
-  MAX_RIGHT_PANEL_WIDTH 
-};
+export { MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_RIGHT_PANEL_WIDTH, MAX_RIGHT_PANEL_WIDTH };
+
+export { useThemeStore } from './themeStore';

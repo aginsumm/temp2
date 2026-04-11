@@ -1,13 +1,11 @@
-import { useState, useEffect } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom'; // 1. 引入 useNavigate
+import { useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   MessageSquare,
   Network,
   Layers,
   User,
-  Sun,
-  Moon,
   Menu,
   X,
   Settings,
@@ -15,7 +13,8 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { useUIStore } from '../../../stores/uiStore';
-import ConnectionStatus from '../../common/ConnectionStatus';
+import NetworkStatusManager from '../../common/NetworkStatusManager';
+import ThemeToggle from '../../common/ThemeToggle';
 
 const navItems = [
   { path: '/', label: '首页', icon: null },
@@ -26,35 +25,9 @@ const navItems = [
 
 export default function Header() {
   const location = useLocation();
-  const navigate = useNavigate(); // 2. 初始化跳转钩子
-  const { theme, setTheme, sidebarCollapsed, toggleSidebar } = useUIStore();
+  const { sidebarCollapsed, toggleSidebar } = useUIStore();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-
-  // --- 状态管理：实时昵称 ---
-  const [user, setUser] = useState(null);
-
-  // 3. 初始加载及监听登录状态
-  useEffect(() => {
-    const savedUser = localStorage.getItem('user');
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
-    }
-  }, [location.pathname]); // 每次切换页面时重新检查一次状态
-
-  // 4. 退出登录逻辑
-  const handleLogout = () => {
-    if (window.confirm("确定要退出登录吗？")) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      localStorage.removeItem('username');
-      setUser(null);
-      setShowUserMenu(false);
-      navigate('/', { replace: true });
-      // 这里的强制刷新可选，为了确保所有状态（如WebSocket）彻底关闭
-      window.location.reload(); 
-    }
-  };
 
   const isActive = (path) => {
     if (path === '/') return location.pathname === '/';
@@ -62,12 +35,20 @@ export default function Header() {
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 h-16 bg-white/95 backdrop-blur-md border-b border-gray-200/50 z-50 shadow-sm">
+    <header
+      className="fixed top-0 left-0 right-0 h-16 backdrop-blur-md z-50 transition-colors duration-300"
+      style={{
+        background: 'var(--color-surface)',
+        borderBottom: '1px solid var(--color-border-light)',
+        boxShadow: 'var(--color-shadow)',
+      }}
+    >
       <div className="h-full px-4 lg:px-6 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <button
             onClick={toggleSidebar}
-            className="w-10 h-10 flex items-center justify-center rounded-lg transition-all duration-200 bg-transparent border-none hover:bg-amber-100"
+            className="w-10 h-10 flex items-center justify-center rounded-lg transition-all duration-200 border-none"
+            style={{ background: 'transparent', color: 'var(--color-text-primary)' }}
             aria-label="Toggle sidebar"
           >
             {sidebarCollapsed ? <Menu size={20} /> : <X size={20} />}
@@ -75,17 +56,22 @@ export default function Header() {
 
           <Link to="/" className="flex items-center gap-3 group">
             <motion.div
-              className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-700 to-amber-600 flex items-center justify-center shadow-md group-hover:shadow-lg transition-shadow"
+              className="w-10 h-10 rounded-xl flex items-center justify-center shadow-md group-hover:shadow-lg transition-shadow"
+              style={{ background: 'var(--gradient-secondary)' }}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              <span className="text-white font-bold text-lg">非</span>
+              <span className="font-bold text-lg" style={{ color: 'var(--color-text-inverse)' }}>
+                非
+              </span>
             </motion.div>
             <div className="hidden sm:block">
-              <h1 className="text-lg font-bold bg-gradient-to-r from-amber-700 to-amber-600 bg-clip-text text-transparent">
+              <h1 className="text-lg font-bold" style={{ color: 'var(--color-primary)' }}>
                 非遗数字生命
               </h1>
-              <p className="text-xs text-gray-500 -mt-1">互动引擎</p>
+              <p className="text-xs -mt-1" style={{ color: 'var(--color-text-muted)' }}>
+                互动引擎
+              </p>
             </div>
           </Link>
         </div>
@@ -98,18 +84,19 @@ export default function Header() {
               <Link
                 key={item.path}
                 to={item.path}
-                className={`relative px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200 flex items-center gap-2 ${
-                  active
-                    ? 'text-amber-700 bg-amber-100'
-                    : 'text-gray-600 hover:text-amber-700 hover:bg-gray-100'
-                }`}
+                className="relative px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200 flex items-center gap-2"
+                style={{
+                  color: active ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+                  background: active ? 'var(--color-primary-light)' : 'transparent',
+                }}
               >
                 {Icon && <Icon size={18} />}
                 {item.label}
                 {active && (
                   <motion.div
                     layoutId="activeNav"
-                    className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-gradient-to-r from-amber-700 to-amber-600 rounded-full"
+                    className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full"
+                    style={{ background: 'var(--gradient-secondary)' }}
                   />
                 )}
               </Link>
@@ -117,83 +104,113 @@ export default function Header() {
           })}
         </nav>
 
-        <div className="flex items-center gap-3">
-          {/* 只有登录后才显示连接状态 */}
-          {user && <ConnectionStatus />}
+        <div className="flex items-center gap-2">
+          <NetworkStatusManager mode="compact" showLatency showQueue={false} />
 
-          <motion.button
-            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-            className="w-10 h-10 flex items-center justify-center rounded-lg transition-all duration-200 bg-transparent border-none hover:bg-amber-100"
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
-          >
-            {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
-          </motion.button>
+          <ThemeToggle variant="dropdown" size="sm" />
 
           <div className="relative">
-            {/* 5. 动态显示用户头像或登录按钮 */}
-            {user ? (
-              <>
-                <button
-                  onClick={() => setShowUserMenu(!showUserMenu)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors"
-                >
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-600 to-amber-700 flex items-center justify-center text-white font-medium text-sm">
-                    {user.username.charAt(0).toUpperCase()}
-                  </div>
-                  <span className="hidden md:block text-sm font-medium text-gray-700">{user.username}</span>
-                  <ChevronDown
-                    size={16}
-                    className={`text-gray-500 transition-transform ${showUserMenu ? 'rotate-180' : ''}`}
-                  />
-                </button>
-
-                {showUserMenu && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-lg border border-gray-200/50 py-2 z-50"
-                  >
-                    <Link
-                      to="/user"
-                      className="flex items-center gap-3 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 hover:text-amber-700 transition-colors"
-                      onClick={() => setShowUserMenu(false)}
-                    >
-                      <User size={16} />
-                      个人中心
-                    </Link>
-                    <Link
-                      to="/settings"
-                      className="flex items-center gap-3 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 hover:text-amber-700 transition-colors"
-                      onClick={() => setShowUserMenu(false)}
-                    >
-                      <Settings size={16} />
-                      设置
-                    </Link>
-                    <hr className="my-2 border-gray-200" />
-                    <button
-                      className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
-                      onClick={handleLogout} // 6. 绑定退出函数
-                    >
-                      <LogOut size={16} />
-                      退出登录
-                    </button>
-                  </motion.div>
-                )}
-              </>
-            ) : (
-              // 7. 未登录状态显示登录链接
-              <Link
-                to="/login"
-                className="px-5 py-2 bg-amber-700 text-white rounded-lg text-sm font-medium hover:bg-amber-800 transition-colors"
+            <button
+              onClick={() => setShowUserMenu(!showUserMenu)}
+              className="flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors"
+              style={{ background: 'transparent' }}
+            >
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center font-medium text-sm"
+                style={{
+                  background: 'var(--gradient-primary)',
+                  color: 'var(--color-text-inverse)',
+                }}
               >
-                登录
-              </Link>
+                U
+              </div>
+              <ChevronDown
+                size={14}
+                className={`transition-transform hidden sm:block ${showUserMenu ? 'rotate-180' : ''}`}
+                style={{ color: 'var(--color-text-muted)' }}
+              />
+            </button>
+
+            {showUserMenu && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="absolute right-0 top-full mt-2 w-48 rounded-xl shadow-lg py-2 z-50"
+                style={{
+                  background: 'var(--color-surface)',
+                  border: '1px solid var(--color-border-light)',
+                }}
+              >
+                <Link
+                  to="/user"
+                  className="flex items-center gap-3 px-4 py-2 text-sm transition-colors"
+                  style={{ color: 'var(--color-text-secondary)' }}
+                  onClick={() => setShowUserMenu(false)}
+                >
+                  <User size={16} />
+                  个人中心
+                </Link>
+                <Link
+                  to="/settings"
+                  className="flex items-center gap-3 px-4 py-2 text-sm transition-colors"
+                  style={{ color: 'var(--color-text-secondary)' }}
+                  onClick={() => setShowUserMenu(false)}
+                >
+                  <Settings size={16} />
+                  设置
+                </Link>
+                <hr style={{ borderColor: 'var(--color-border-light)', margin: '0.5rem 0' }} />
+                <button
+                  className="w-full flex items-center gap-3 px-4 py-2 text-sm transition-colors"
+                  style={{ color: 'var(--color-error)' }}
+                  onClick={() => {
+                    setShowUserMenu(false);
+                  }}
+                >
+                  <LogOut size={16} />
+                  退出登录
+                </button>
+              </motion.div>
             )}
           </div>
         </div>
       </div>
+
+      {mobileMenuOpen && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+          className="lg:hidden"
+          style={{
+            borderTop: '1px solid var(--color-border-light)',
+            background: 'var(--color-surface)',
+          }}
+        >
+          <nav className="p-4 space-y-1">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const active = isActive(item.path);
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors"
+                  style={{
+                    color: active ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+                    background: active ? 'var(--color-primary-light)' : 'transparent',
+                  }}
+                >
+                  {Icon && <Icon size={20} />}
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+        </motion.div>
+      )}
     </header>
   );
 }

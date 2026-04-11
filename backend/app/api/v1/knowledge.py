@@ -3,6 +3,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List
 
 from app.core.database import get_db
+from app.core.constants import (
+    CATEGORY_CONFIG,
+    CATEGORY_COLORS,
+    CATEGORY_LABELS,
+    get_category_color,
+    get_category_label,
+    get_graph_categories,
+)
 from app.services.knowledge_service import KnowledgeService
 from app.schemas.knowledge import (
     Entity,
@@ -219,29 +227,11 @@ async def get_graph_data(
         center_entity_id, max_depth
     )
 
-    categories = [
-        {"name": "传承人", "itemStyle": {"color": "#8B5CF6"}},
-        {"name": "技艺", "itemStyle": {"color": "#10B981"}},
-        {"name": "作品", "itemStyle": {"color": "#F59E0B"}},
-        {"name": "纹样", "itemStyle": {"color": "#EF4444"}},
-        {"name": "地域", "itemStyle": {"color": "#06B6D4"}},
-        {"name": "时期", "itemStyle": {"color": "#6366F1"}},
-        {"name": "材料", "itemStyle": {"color": "#84CC16"}},
-    ]
-
-    category_map = {
-        "inheritor": "传承人",
-        "technique": "技艺",
-        "work": "作品",
-        "pattern": "纹样",
-        "region": "地域",
-        "period": "时期",
-        "material": "材料",
-    }
+    categories = get_graph_categories()
 
     nodes = []
     for entity in entities:
-        category_name = category_map.get(entity.type, entity.type)
+        category_name = get_category_label(entity.type)
         symbol_size = int(20 + entity.importance * 30)
 
         nodes.append(
@@ -251,16 +241,7 @@ async def get_graph_data(
                 category=category_name,
                 symbolSize=symbol_size,
                 value=entity.importance,
-                itemStyle={
-                    "color": next(
-                        (
-                            c["itemStyle"]["color"]
-                            for c in categories
-                            if c["name"] == category_name
-                        ),
-                        "#3B82F6",
-                    )
-                },
+                itemStyle={"color": get_category_color(entity.type)},
             )
         )
 
@@ -329,16 +310,7 @@ async def get_statistics(
 
 @router.get("/categories", summary="获取实体类型列表")
 async def get_categories():
-    categories = [
-        {"value": "inheritor", "label": "传承人", "color": "#8B5CF6"},
-        {"value": "technique", "label": "技艺", "color": "#10B981"},
-        {"value": "work", "label": "作品", "color": "#F59E0B"},
-        {"value": "pattern", "label": "纹样", "color": "#EF4444"},
-        {"value": "region", "label": "地域", "color": "#06B6D4"},
-        {"value": "period", "label": "时期", "color": "#6366F1"},
-        {"value": "material", "label": "材料", "color": "#84CC16"},
-    ]
-    return categories
+    return CATEGORY_CONFIG
 
 
 @router.get("/regions", summary="获取地域列表")

@@ -1,24 +1,39 @@
+export interface MessageVersion {
+  id: string;
+  content: string;
+  created_at: string;
+  is_current: boolean;
+}
+
 export interface Message {
   id: string;
-  sessionId: string;
-  role: "user" | "assistant";
+  session_id: string;
+  role: 'user' | 'assistant';
   content: string;
-  createdAt: Date;
+  created_at: string;
   sources?: Source[];
   entities?: Entity[];
   keywords?: string[];
-  feedback?: "helpful" | "unclear" | null;
-  isFavorite?: boolean;
+  feedback?: 'helpful' | 'unclear' | null;
+  is_favorite?: boolean;
+  versions?: MessageVersion[];
+  parent_message_id?: string;
+  is_edited?: boolean;
+  version_group_id?: string;
+  isStreaming?: boolean;
+  is_regenerating?: boolean;
 }
 
 export interface Session {
   id: string;
-  userId: string;
+  user_id: string;
   title: string;
-  createdAt: Date;
-  updatedAt: Date;
-  messageCount: number;
-  isPinned?: boolean;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+  is_pinned?: boolean;
+  is_archived?: boolean;
+  tags?: string[];
 }
 
 export interface Source {
@@ -35,24 +50,31 @@ export interface Entity {
   name: string;
   type: EntityType;
   description?: string;
+  url?: string;
+  relevance?: number;
+  metadata?: {
+    period?: string;
+    region?: string;
+    category?: string;
+  };
   properties?: Record<string, unknown>;
 }
 
-export type EntityType = 
-  | "inheritor"
-  | "technique"
-  | "work"
-  | "pattern"
-  | "region"
-  | "period"
-  | "material";
+export type EntityType =
+  | 'inheritor'
+  | 'technique'
+  | 'work'
+  | 'pattern'
+  | 'region'
+  | 'period'
+  | 'material';
 
 export interface FavoriteQuestion {
   id: string;
-  userId: string;
+  user_id: string;
   question: string;
   category: string;
-  createdAt: Date;
+  created_at: string;
 }
 
 export interface RecommendedQuestion {
@@ -72,8 +94,8 @@ export interface ChatState {
 export interface UIState {
   sidebarCollapsed: boolean;
   rightPanelCollapsed: boolean;
-  theme: "light" | "dark";
-  fontSize: "small" | "medium" | "large";
+  theme: 'light' | 'dark';
+  fontSize: 'small' | 'medium' | 'large';
 }
 
 export interface User {
@@ -81,7 +103,7 @@ export interface User {
   username: string;
   email: string;
   avatar?: string;
-  createdAt: Date;
+  created_at: string;
 }
 
 export interface VoiceInputState {
@@ -91,30 +113,30 @@ export interface VoiceInputState {
 }
 
 export interface ChatRequest {
-  sessionId: string;
+  session_id: string;
   content: string;
-  messageType?: "text" | "voice";
+  message_type?: 'text' | 'voice';
 }
 
 export interface ChatResponse {
-  messageId: string;
+  message_id: string;
   content: string;
-  role: "assistant";
+  role: 'assistant';
   sources?: Source[];
   entities?: Entity[];
   keywords?: string[];
-  createdAt: string;
+  created_at: string;
 }
 
 export interface SessionListResponse {
   sessions: Session[];
   total: number;
   page: number;
-  pageSize: number;
+  page_size: number;
 }
 
 export interface MessageListResponse {
   messages: Message[];
   total: number;
-  hasMore: boolean;
+  has_more: boolean;
 }

@@ -30,6 +30,7 @@
     "react-hook-form": "^7.48.0",
     "react-markdown": "^9.0.0",
     "react-router-dom": "^6.20.0",
+    "react-syntax-highlighter": "^16.1.1",
     "three": "^0.183.2",
     "vis-timeline": "^7.7.0",
     "zustand": "^4.4.0"
@@ -43,6 +44,7 @@
     "@types/prismjs": "^1.26.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "@types/react-syntax-highlighter": "^15.5.13",
     "@types/three": "^0.183.1",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",

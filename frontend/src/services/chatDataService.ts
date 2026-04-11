@@ -1,26 +1,61 @@
 import { networkStatusService, type NetworkStatus } from './networkStatus';
-import { dataSyncService } from './dataSync';
-import { offlineStorage } from './offlineStorage';
-import chatApi from '../api/chat';
-import { generateMockResponse, getMockRecommendedQuestions } from '../api/mockResponses';
+import { chatRepository } from '../data/repositories/chatRepository';
+import { mockChatService } from '../data/mockServices/mockChatService';
+import { dataInitializer } from '../data/dataInitializer';
 import type { Session, Message } from '../types/chat';
 
+const CURRENT_USER_KEY = 'heritage_current_user';
+
+function getCurrentUserId(): string {
+  try {
+    const stored = localStorage.getItem(CURRENT_USER_KEY);
+    if (stored) {
+      const user = JSON.parse(stored);
+      return user.id || 'guest_user';
+    }
+  } catch {
+    console.warn('Failed to parse current user');
+  }
+  return 'guest_user';
+}
+
 type Mode = 'online' | 'offline';
+
+interface StreamState {
+  aborted: boolean;
+  intervalId: NodeJS.Timeout | null;
+  timeoutId: NodeJS.Timeout | null;
+}
 
 interface UnifiedChatService {
   getSessions: () => Promise<Session[]>;
   createSession: (title?: string) => Promise<Session>;
   deleteSession: (sessionId: string) => Promise<void>;
+  updateSession: (sessionId: string, updates: Partial<Session>) => Promise<Session>;
   getMessages: (sessionId: string) => Promise<Message[]>;
   sendMessage: (sessionId: string, content: string) => Promise<Message>;
+  sendMessageStream: (
+    sessionId: string,
+    content: string,
+    onChunk: (chunk: string) => void,
+    onComplete: (message: Message) => void,
+    onError?: (error: Error) => void
+  ) => Promise<() => void>;
   submitFeedback: (messageId: string, feedback: 'helpful' | 'unclear') => Promise<void>;
-  toggleFavorite: (messageId: string) => Promise<boolean>;
+  toggleFavorite: (messageId: string, currentStatus?: boolean) => Promise<boolean>;
   getRecommendedQuestions: (sessionId?: string) => Promise<{ id: string; question: string }[]>;
+  getFavoriteQuestions: () => Promise<
+    { id: string; question: string; category: string; timestamp: string }[]
+  >;
+  getFavoriteMessages: (page?: number, pageSize?: number) => Promise<Message[]>;
 }
 
+const STREAM_TIMEOUT = 60000;
+
 class ChatDataService implements UnifiedChatService {
-  private mode: Mode = 'online';
+  private mode: Mode = 'offline';
   private initialized = false;
+  private activeStreams: Map<string, StreamState> = new Map();
 
   constructor() {
     networkStatusService.subscribe((status: NetworkStatus) => {
@@ -32,13 +67,26 @@ class ChatDataService implements UnifiedChatService {
   }
 
   private async init() {
-    await offlineStorage.init();
+    await dataInitializer.initialize();
     this.initialized = true;
   }
 
   private async ensureInitialized() {
     if (!this.initialized) {
       await this.init();
+    }
+  }
+
+  private cleanupStream(streamId: string) {
+    const streamState = this.activeStreams.get(streamId);
+    if (streamState) {
+      if (streamState.intervalId) {
+        clearInterval(streamState.intervalId);
+      }
+      if (streamState.timeoutId) {
+        clearTimeout(streamState.timeoutId);
+      }
+      this.activeStreams.delete(streamId);
     }
   }
 
@@ -52,204 +100,160 @@ class ChatDataService implements UnifiedChatService {
 
   async getSessions(): Promise<Session[]> {
     await this.ensureInitialized();
-    if (this.mode === 'online') {
-      try {
-        const response = await chatApi.getSessions();
-        const sessions = response.sessions;
-
-        for (const session of sessions) {
-          await offlineStorage.saveSession(session);
-        }
-
-        return sessions;
-      } catch (error) {
-        console.warn('Failed to get sessions from server, using local data');
-        return await offlineStorage.getAllSessions();
-      }
-    } else {
-      return await offlineStorage.getAllSessions();
-    }
+    return chatRepository.getAllSessions();
   }
 
   async createSession(title = '新对话'): Promise<Session> {
     await this.ensureInitialized();
-    const session: Session = {
-      id: `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      userId: 'default',
-      title,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      messageCount: 0,
-    };
-
-    await offlineStorage.saveSession(session);
-
-    if (this.mode === 'online') {
-      try {
-        const serverSession = await chatApi.createSession(title);
-        await offlineStorage.saveSession(serverSession);
-        return serverSession;
-      } catch (error) {
-        console.warn('Failed to create session on server, saved locally only');
-      }
-    } else {
-      await dataSyncService.saveSessionLocally(session);
-    }
-
-    return session;
+    const userId = getCurrentUserId();
+    return mockChatService.createSession(title, userId);
   }
 
   async deleteSession(sessionId: string): Promise<void> {
     await this.ensureInitialized();
-    await offlineStorage.deleteSession(sessionId);
+    return chatRepository.deleteSession(sessionId);
+  }
 
-    if (this.mode === 'online') {
-      try {
-        await chatApi.deleteSession(sessionId);
-      } catch (error) {
-        console.warn('Failed to delete session on server');
-      }
-    } else {
-      await dataSyncService.deleteSessionLocally(sessionId);
-    }
+  async updateSession(sessionId: string, updates: Partial<Session>): Promise<Session> {
+    await this.ensureInitialized();
+    const updated = await chatRepository.updateSession(sessionId, updates);
+    return updated || ({ id: sessionId, ...updates } as Session);
   }
 
   async getMessages(sessionId: string): Promise<Message[]> {
     await this.ensureInitialized();
-    if (this.mode === 'online') {
-      try {
-        const response = await chatApi.getMessages(sessionId);
-        const messages = response.messages;
-
-        for (const message of messages) {
-          await offlineStorage.saveMessage(message);
-        }
-
-        return messages;
-      } catch (error) {
-        console.warn('Failed to get messages from server, using local data');
-        return await offlineStorage.getMessages(sessionId);
-      }
-    } else {
-      return await offlineStorage.getMessages(sessionId);
-    }
+    return chatRepository.getMessagesBySession(sessionId);
   }
 
   async sendMessage(sessionId: string, content: string): Promise<Message> {
     await this.ensureInitialized();
-    const userMessage: Message = {
-      id: `msg_${Date.now()}_user`,
-      sessionId,
-      role: 'user',
-      content,
-      createdAt: new Date(),
-    };
-
-    await offlineStorage.saveMessage(userMessage);
-
-    let aiMessage: Message;
-
-    if (this.mode === 'online') {
-      try {
-        const response = await chatApi.sendMessage({
-          sessionId,
-          content,
-        });
-
-        aiMessage = {
-          id: response.messageId,
-          sessionId,
-          role: 'assistant',
-          content: response.content,
-          createdAt: new Date(response.createdAt),
-          sources: response.sources || [],
-          entities: response.entities || [],
-          keywords: response.keywords || [],
-        };
-
-        await offlineStorage.saveMessage(aiMessage);
-      } catch (error) {
-        console.warn('Failed to send message to server, using mock response');
-        aiMessage = await this.generateOfflineResponse(sessionId, content);
-      }
-    } else {
-      aiMessage = await this.generateOfflineResponse(sessionId, content);
-      await dataSyncService.saveMessageLocally(userMessage);
-    }
-
-    return aiMessage;
+    return mockChatService.sendMessage(sessionId, content);
   }
 
-  private async generateOfflineResponse(sessionId: string, content: string): Promise<Message> {
-    const mockResponse = generateMockResponse(content);
+  async sendMessageStream(
+    sessionId: string,
+    content: string,
+    onChunk: (chunk: string) => void,
+    onComplete: (message: Message) => void,
+    onError?: (error: Error) => void
+  ): Promise<() => void> {
+    await this.ensureInitialized();
 
-    const aiMessage: Message = {
-      id: `msg_${Date.now()}_assistant`,
-      sessionId,
-      role: 'assistant',
-      content: mockResponse.content,
-      createdAt: new Date(),
-      sources: mockResponse.sources || [],
-      entities: mockResponse.entities || [],
-      keywords: mockResponse.keywords || [],
+    const streamId = `stream_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const streamState: StreamState = {
+      aborted: false,
+      intervalId: null,
+      timeoutId: null,
+    };
+    this.activeStreams.set(streamId, streamState);
+
+    const cleanup = () => {
+      this.cleanupStream(streamId);
     };
 
-    await offlineStorage.saveMessage(aiMessage);
-    return aiMessage;
+    streamState.timeoutId = setTimeout(() => {
+      if (!streamState.aborted) {
+        streamState.aborted = true;
+        cleanup();
+        if (onError) {
+          onError(new Error('Stream timeout'));
+        }
+      }
+    }, STREAM_TIMEOUT);
+
+    const abortFn = await mockChatService.sendMessageStream(
+      sessionId,
+      content,
+      (chunk) => {
+        if (!streamState.aborted) {
+          onChunk(chunk);
+        }
+      },
+      (message) => {
+        if (!streamState.aborted) {
+          if (streamState.timeoutId) {
+            clearTimeout(streamState.timeoutId);
+          }
+          cleanup();
+          onComplete(message);
+        }
+      },
+      (error) => {
+        if (!streamState.aborted) {
+          cleanup();
+          if (onError) {
+            onError(error);
+          }
+        }
+      }
+    );
+
+    return () => {
+      streamState.aborted = true;
+      cleanup();
+      abortFn();
+    };
   }
 
   async submitFeedback(messageId: string, feedback: 'helpful' | 'unclear'): Promise<void> {
-    await offlineStorage.updateMessage(messageId, { feedback });
-
-    if (this.mode === 'online') {
-      try {
-        await chatApi.submitFeedback(messageId, feedback);
-      } catch (error) {
-        console.warn('Failed to submit feedback to server');
-      }
-    } else {
-      await dataSyncService.updateMessageFeedbackLocally(messageId, feedback);
-    }
+    await this.ensureInitialized();
+    await chatRepository.updateMessage(messageId, { feedback });
   }
 
   async toggleFavorite(messageId: string, currentStatus?: boolean): Promise<boolean> {
-    const newFavoriteStatus = currentStatus !== undefined ? !currentStatus : true;
-    await offlineStorage.updateMessage(messageId, { isFavorite: newFavoriteStatus });
-
-    if (this.mode === 'online') {
-      try {
-        const response = await chatApi.toggleFavorite(messageId);
-        return response.isFavorite;
-      } catch (error) {
-        console.warn('Failed to toggle favorite on server');
-      }
-    }
-
-    return newFavoriteStatus;
+    await this.ensureInitialized();
+    return mockChatService.toggleFavorite(messageId, currentStatus);
   }
 
   async getRecommendedQuestions(sessionId?: string): Promise<{ id: string; question: string }[]> {
-    if (this.mode === 'online') {
-      try {
-        const response = await chatApi.getRecommendedQuestions(sessionId);
-        return response.questions || [];
-      } catch (error) {
-        console.warn('Failed to get recommendations from server, using mock data');
-        return getMockRecommendedQuestions();
-      }
-    } else {
-      return getMockRecommendedQuestions();
-    }
+    console.debug('getRecommendedQuestions for session:', sessionId);
+    return mockChatService.getRecommendedQuestions();
+  }
+
+  async getFavoriteQuestions(): Promise<
+    { id: string; question: string; category: string; timestamp: string }[]
+  > {
+    await this.ensureInitialized();
+
+    const allMessages = await chatRepository.getAllMessages();
+    const favoriteMessages = allMessages.filter((m) => m.is_favorite);
+
+    return favoriteMessages.map((m) => ({
+      id: m.id,
+      question: m.content,
+      category: m.role === 'user' ? '收藏问题' : '收藏回答',
+      timestamp: m.created_at,
+    }));
+  }
+
+  async getFavoriteMessages(page = 1, pageSize = 20): Promise<Message[]> {
+    await this.ensureInitialized();
+
+    const favoriteMessages = await chatRepository.getFavoriteMessages();
+    return favoriteMessages.slice((page - 1) * pageSize, page * pageSize);
   }
 
   async forceSync(): Promise<void> {
-    if (this.mode === 'online') {
-      await dataSyncService.syncPendingOperations();
-    }
+    console.log('Force sync - local mode only');
   }
 
   async getStorageStats() {
-    return await offlineStorage.getStorageStats();
+    const sessionCount = await chatRepository.getSessionCount();
+    const messageCount = await chatRepository.getMessageCount();
+
+    return {
+      sessions: sessionCount,
+      messages: messageCount,
+      storage: 'IndexedDB',
+      mode: 'local',
+    };
+  }
+
+  abortAllStreams() {
+    this.activeStreams.forEach((state, id) => {
+      state.aborted = true;
+      this.cleanupStream(id);
+    });
   }
 }
 
