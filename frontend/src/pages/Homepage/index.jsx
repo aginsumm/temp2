@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   MessageSquare,
   Network,
@@ -19,7 +19,11 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import HeritageImages from '../../assets/heritage-images';
+import ThemeBackground from '../../components/common/ThemeBackground';
+import { useThemeStore } from '../../stores/themeStore';
+import { getThemeVisual } from '../../config/themes/heritageThemes';
 import '../../styles/heritage.css';
+import '../../styles/theme-patterns.css';
 
 const floatingElements = [
   { icon: '🎭', delay: 0, x: '10%', y: '20%' },
@@ -112,13 +116,21 @@ const itemVariants = {
 };
 
 export default function Homepage() {
+  const { currentTheme, themeId } = useThemeStore();
+  const visual = useMemo(() => {
+    if (currentTheme?.visual) {
+      return currentTheme.visual;
+    }
+    return getThemeVisual(themeId || 'ink-wash');
+  }, [currentTheme, themeId]);
+
   useEffect(() => {
-    const handleScroll = () => {
-      // 滚动监听逻辑（如需要可在此添加）
-    };
+    const handleScroll = () => {};
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
+
+  const particleCount = visual.particles.enabled ? visual.particles.count : 12;
 
   return (
     <div className="min-h-[calc(100vh-64px)] overflow-hidden">
@@ -136,16 +148,16 @@ export default function Homepage() {
         />
 
         {/* 金色粒子特效 */}
-        {[...Array(12)].map((_, i) => (
+        {[...Array(particleCount)].map((_, i) => (
           <div
             key={i}
             className="golden-particle"
             style={{
-              left: `${10 + i * 7.5}%`,
+              left: `${10 + i * (80 / particleCount)}%`,
               top: `${15 + ((i * 13) % 70)}%`,
               animationDelay: `${i * 0.7}s`,
-              width: `${3 + Math.random() * 4}px`,
-              height: `${3 + Math.random() * 4}px`,
+              width: `${visual.particles.size + Math.random() * 2}px`,
+              height: `${visual.particles.size + Math.random() * 2}px`,
             }}
           />
         ))}
@@ -1010,7 +1022,7 @@ export default function Homepage() {
       <section className="py-24 px-4 relative hero-heritage-bg overflow-hidden">
         <div className="building-silhouette" />
 
-        {[...Array(8)].map((_, i) => (
+        {[...Array(Math.min(particleCount, 8))].map((_, i) => (
           <div
             key={i}
             className="golden-particle"
@@ -1018,8 +1030,8 @@ export default function Homepage() {
               left: `${5 + i * 12}%`,
               top: `${20 + ((i * 17) % 60)}%`,
               animationDelay: `${i * 0.9}s`,
-              width: `${2 + Math.random() * 3}px`,
-              height: `${2 + Math.random() * 3}px`,
+              width: `${visual.particles.size + Math.random() * 2}px`,
+              height: `${visual.particles.size + Math.random() * 2}px`,
             }}
           />
         ))}

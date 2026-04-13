@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Sparkles,
@@ -12,6 +12,9 @@ import {
   Award,
   Users,
 } from 'lucide-react';
+import { useThemeStore } from '../../../stores/themeStore';
+import { getThemeVisual } from '../../../config/themes/heritageThemes';
+import '../../../styles/theme-patterns.css';
 
 interface WelcomeScreenProps {
   onQuestionClick: (question: string) => void;
@@ -110,6 +113,13 @@ const itemVariants = {
 export default function WelcomeScreen({ onQuestionClick, userName }: WelcomeScreenProps) {
   const [currentTip, setCurrentTip] = useState(0);
   const [greeting, setGreeting] = useState('');
+  const { currentTheme, themeId } = useThemeStore();
+  const visual = useMemo(() => {
+    if (currentTheme?.visual) {
+      return currentTheme.visual;
+    }
+    return getThemeVisual(themeId || 'ink-wash');
+  }, [currentTheme, themeId]);
 
   useEffect(() => {
     const hour = new Date().getHours();
@@ -128,7 +138,7 @@ export default function WelcomeScreen({ onQuestionClick, userName }: WelcomeScre
 
   return (
     <div
-      className="flex flex-col items-center justify-center h-full px-3 py-4 overflow-y-auto relative transition-colors duration-300"
+      className="flex flex-col items-center justify-center h-full px-3 py-4 overflow-y-auto relative transition-colors duration-300 theme-visual-container"
       style={{ background: 'var(--color-background)' }}
     >
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -151,6 +161,38 @@ export default function WelcomeScreen({ onQuestionClick, userName }: WelcomeScre
           style={{ background: 'var(--gradient-accent)', opacity: 0.2 }}
         />
       </div>
+
+      {visual.particles.enabled && (
+        <div className="theme-particles-container">
+          {[...Array(Math.min(visual.particles.count, 6))].map((_, i) => (
+            <motion.div
+              key={i}
+              className="absolute rounded-full"
+              initial={{ opacity: 0, scale: 0 }}
+              animate={{
+                opacity: [0.4, 0.8, 0.4],
+                scale: [1, 1.2, 1],
+                y: [0, -30, -60, -30, 0],
+                x: [0, 10, -5, -15, 0],
+              }}
+              transition={{
+                duration: visual.particles.speed + i,
+                repeat: Infinity,
+                ease: 'easeInOut',
+                delay: i * 0.8,
+              }}
+              style={{
+                left: `${15 + i * 15}%`,
+                top: `${20 + ((i * 10) % 60)}%`,
+                width: visual.particles.size,
+                height: visual.particles.size,
+                background: `radial-gradient(circle, ${visual.particles.color} 0%, transparent 70%)`,
+                boxShadow: `0 0 8px ${visual.particles.color}`,
+              }}
+            />
+          ))}
+        </div>
+      )}
 
       <motion.div
         variants={containerVariants}

@@ -40,6 +40,42 @@ export interface HeritageThemeColors {
   gradientCard: string;
 }
 
+export interface ThemePattern {
+  id: string;
+  name: string;
+  description: string;
+  svgPattern: string;
+  backgroundColor: string;
+  patternColor: string;
+  patternOpacity: number;
+}
+
+export interface ThemeVisual {
+  heritageImage: {
+    id: number;
+    name: string;
+    gradient: string;
+    keywords: string[];
+  };
+  patterns: {
+    background: ThemePattern;
+    border: ThemePattern;
+    decoration: ThemePattern;
+  };
+  particles: {
+    enabled: boolean;
+    color: string;
+    count: number;
+    size: number;
+    speed: number;
+  };
+  glow: {
+    primary: string;
+    secondary: string;
+    accent: string;
+  };
+}
+
 export interface HeritageTheme {
   id: HeritageThemeId;
   name: string;
@@ -67,7 +103,28 @@ export interface HeritageTheme {
     region: string;
     heritageItems: string[];
   };
+  visual: ThemeVisual;
 }
+
+const createInkWashPattern = (color: string, opacity: number): string => {
+  return `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cdefs%3E%3Cfilter id='blur'%3E%3CfeGaussianBlur stdDeviation='1'/%3E%3C/filter%3E%3C/defs%3E%3Ccircle cx='30' cy='30' r='8' fill='${encodeURIComponent(color)}' fill-opacity='${opacity}' filter='url(%23blur)'/%3E%3Ccircle cx='10' cy='10' r='4' fill='${encodeURIComponent(color)}' fill-opacity='${opacity * 0.5}'/%3E%3Ccircle cx='50' cy='50' r='5' fill='${encodeURIComponent(color)}' fill-opacity='${opacity * 0.6}'/%3E%3C/svg%3E")`;
+};
+
+const createPorcelainPattern = (color: string, opacity: number): string => {
+  return `url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M40 10 Q50 20 60 15 Q70 25 65 40 Q75 50 65 60 Q55 70 40 65 Q25 75 15 60 Q5 50 15 40 Q10 25 20 15 Q30 5 40 10' fill='none' stroke='${encodeURIComponent(color)}' stroke-opacity='${opacity}' stroke-width='1.5'/%3E%3Ccircle cx='40' cy='40' r='8' fill='none' stroke='${encodeURIComponent(color)}' stroke-opacity='${opacity * 0.8}' stroke-width='1'/%3E%3C/svg%3E")`;
+};
+
+const createDunhuangPattern = (color: string, opacity: number): string => {
+  return `url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M50 10 Q60 30 80 30 Q60 50 70 70 Q50 60 30 70 Q40 50 20 30 Q40 30 50 10' fill='none' stroke='${encodeURIComponent(color)}' stroke-opacity='${opacity}' stroke-width='1.5'/%3E%3Ccircle cx='50' cy='50' r='15' fill='none' stroke='${encodeURIComponent(color)}' stroke-opacity='${opacity * 0.6}' stroke-width='1'/%3E%3Ccircle cx='50' cy='50' r='25' fill='none' stroke='${encodeURIComponent(color)}' stroke-opacity='${opacity * 0.4}' stroke-width='0.5' stroke-dasharray='4 2'/%3E%3C/svg%3E")`;
+};
+
+const createJiangnanPattern = (color: string, opacity: number): string => {
+  return `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 30 Q15 20 30 30 Q45 40 60 30' fill='none' stroke='${encodeURIComponent(color)}' stroke-opacity='${opacity}' stroke-width='1'/%3E%3Cpath d='M0 45 Q15 35 30 45 Q45 55 60 45' fill='none' stroke='${encodeURIComponent(color)}' stroke-opacity='${opacity * 0.5}' stroke-width='0.5'/%3E%3Crect x='20' y='20' width='20' height='20' fill='none' stroke='${encodeURIComponent(color)}' stroke-opacity='${opacity * 0.3}' stroke-width='0.5'/%3E%3C/svg%3E")`;
+};
+
+const createBrocadePattern = (color: string, opacity: number): string => {
+  return `url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Crect x='0' y='0' width='20' height='20' fill='${encodeURIComponent(color)}' fill-opacity='${opacity * 0.3}'/%3E%3Crect x='20' y='20' width='20' height='20' fill='${encodeURIComponent(color)}' fill-opacity='${opacity * 0.3}'/%3E%3Cpath d='M0 0 L40 40 M40 0 L0 40' stroke='${encodeURIComponent(color)}' stroke-opacity='${opacity * 0.5}' stroke-width='0.5'/%3E%3Ccircle cx='20' cy='20' r='5' fill='none' stroke='${encodeURIComponent(color)}' stroke-opacity='${opacity}' stroke-width='1'/%3E%3C/svg%3E")`;
+};
 
 export const heritageThemes: Record<HeritageThemeId, HeritageTheme> = {
   'ink-wash': {
@@ -169,6 +226,55 @@ export const heritageThemes: Record<HeritageThemeId, HeritageTheme> = {
       era: '唐宋至今',
       region: '全国',
       heritageItems: ['中国画', '书法', '文房四宝'],
+    },
+    visual: {
+      heritageImage: {
+        id: 1,
+        name: '昆曲',
+        gradient: 'linear-gradient(135deg, #8B4513 0%, #D2691E 50%, #CD853F 100%)',
+        keywords: ['戏曲', '水墨', '脸谱', '云纹'],
+      },
+      patterns: {
+        background: {
+          id: 'ink-wash-bg',
+          name: '水墨晕染',
+          description: '水墨画风格的晕染纹理',
+          svgPattern: createInkWashPattern('#2c2c2c', 0.08),
+          backgroundColor: '#faf9f6',
+          patternColor: '#2c2c2c',
+          patternOpacity: 0.08,
+        },
+        border: {
+          id: 'ink-wash-border',
+          name: '水墨边框',
+          description: '淡雅的水墨风格边框',
+          svgPattern: createInkWashPattern('#8b4513', 0.15),
+          backgroundColor: 'transparent',
+          patternColor: '#8b4513',
+          patternOpacity: 0.15,
+        },
+        decoration: {
+          id: 'ink-wash-deco',
+          name: '水墨装饰',
+          description: '水墨风格的装饰元素',
+          svgPattern: createInkWashPattern('#c41e3a', 0.2),
+          backgroundColor: 'transparent',
+          patternColor: '#c41e3a',
+          patternOpacity: 0.2,
+        },
+      },
+      particles: {
+        enabled: true,
+        color: '#daa520',
+        count: 12,
+        size: 4,
+        speed: 8,
+      },
+      glow: {
+        primary: 'rgba(44, 44, 44, 0.3)',
+        secondary: 'rgba(139, 69, 19, 0.25)',
+        accent: 'rgba(196, 30, 58, 0.35)',
+      },
     },
   },
 
@@ -272,6 +378,55 @@ export const heritageThemes: Record<HeritageThemeId, HeritageTheme> = {
       region: '江西景德镇',
       heritageItems: ['青花瓷烧制技艺', '景德镇手工制瓷技艺'],
     },
+    visual: {
+      heritageImage: {
+        id: 3,
+        name: '蜀锦',
+        gradient: 'linear-gradient(135deg, #1E3A8A 0%, #3B82F6 50%, #93C5FD 100%)',
+        keywords: ['织锦', '几何纹样', '蓝色', '织物'],
+      },
+      patterns: {
+        background: {
+          id: 'porcelain-bg',
+          name: '青花缠枝',
+          description: '青花瓷风格的缠枝花纹',
+          svgPattern: createPorcelainPattern('#1e4d8c', 0.1),
+          backgroundColor: '#fafcfe',
+          patternColor: '#1e4d8c',
+          patternOpacity: 0.1,
+        },
+        border: {
+          id: 'porcelain-border',
+          name: '青花边框',
+          description: '青花瓷风格的边框纹样',
+          svgPattern: createPorcelainPattern('#4a90c2', 0.2),
+          backgroundColor: 'transparent',
+          patternColor: '#4a90c2',
+          patternOpacity: 0.2,
+        },
+        decoration: {
+          id: 'porcelain-deco',
+          name: '青花装饰',
+          description: '青花瓷风格的装饰元素',
+          svgPattern: createPorcelainPattern('#d4a574', 0.25),
+          backgroundColor: 'transparent',
+          patternColor: '#d4a574',
+          patternOpacity: 0.25,
+        },
+      },
+      particles: {
+        enabled: true,
+        color: '#60a5fa',
+        count: 15,
+        size: 3,
+        speed: 6,
+      },
+      glow: {
+        primary: 'rgba(30, 77, 140, 0.35)',
+        secondary: 'rgba(74, 144, 194, 0.3)',
+        accent: 'rgba(212, 165, 116, 0.4)',
+      },
+    },
   },
 
   dunhuang: {
@@ -373,6 +528,55 @@ export const heritageThemes: Record<HeritageThemeId, HeritageTheme> = {
       era: '十六国至元代',
       region: '甘肃敦煌',
       heritageItems: ['敦煌壁画', '敦煌彩塑', '敦煌飞天'],
+    },
+    visual: {
+      heritageImage: {
+        id: 5,
+        name: '川剧',
+        gradient: 'linear-gradient(135deg, #DC143C 0%, #FF4500 50%, #FFD700 100%)',
+        keywords: ['变脸', '戏曲', '金红', '火焰'],
+      },
+      patterns: {
+        background: {
+          id: 'dunhuang-bg',
+          name: '飞天藻井',
+          description: '敦煌藻井风格的飞天纹样',
+          svgPattern: createDunhuangPattern('#b8860b', 0.12),
+          backgroundColor: '#fdf8f0',
+          patternColor: '#b8860b',
+          patternOpacity: 0.12,
+        },
+        border: {
+          id: 'dunhuang-border',
+          name: '敦煌边框',
+          description: '敦煌风格的边框纹样',
+          svgPattern: createDunhuangPattern('#c54b3c', 0.2),
+          backgroundColor: 'transparent',
+          patternColor: '#c54b3c',
+          patternOpacity: 0.2,
+        },
+        decoration: {
+          id: 'dunhuang-deco',
+          name: '飞天装饰',
+          description: '飞天风格的装饰元素',
+          svgPattern: createDunhuangPattern('#2e8b57', 0.25),
+          backgroundColor: 'transparent',
+          patternColor: '#2e8b57',
+          patternOpacity: 0.25,
+        },
+      },
+      particles: {
+        enabled: true,
+        color: '#f4c430',
+        count: 18,
+        size: 5,
+        speed: 5,
+      },
+      glow: {
+        primary: 'rgba(184, 134, 11, 0.4)',
+        secondary: 'rgba(197, 75, 60, 0.35)',
+        accent: 'rgba(46, 139, 87, 0.45)',
+      },
     },
   },
 
@@ -476,6 +680,55 @@ export const heritageThemes: Record<HeritageThemeId, HeritageTheme> = {
       region: '江南地区',
       heritageItems: ['苏州园林', '江南丝竹', '昆曲'],
     },
+    visual: {
+      heritageImage: {
+        id: 2,
+        name: '苏绣',
+        gradient: 'linear-gradient(135deg, #C41E3A 0%, #DC143C 50%, #FF69B4 100%)',
+        keywords: ['刺绣', '牡丹', '精致', '柔美'],
+      },
+      patterns: {
+        background: {
+          id: 'jiangnan-bg',
+          name: '烟雨朦胧',
+          description: '江南水乡的烟雨纹理',
+          svgPattern: createJiangnanPattern('#4a6741', 0.08),
+          backgroundColor: '#f8faf8',
+          patternColor: '#4a6741',
+          patternOpacity: 0.08,
+        },
+        border: {
+          id: 'jiangnan-border',
+          name: '江南边框',
+          description: '江南风格的边框纹样',
+          svgPattern: createJiangnanPattern('#6b8e7b', 0.15),
+          backgroundColor: 'transparent',
+          patternColor: '#6b8e7b',
+          patternOpacity: 0.15,
+        },
+        decoration: {
+          id: 'jiangnan-deco',
+          name: '江南装饰',
+          description: '江南风格的装饰元素',
+          svgPattern: createJiangnanPattern('#8b7355', 0.2),
+          backgroundColor: 'transparent',
+          patternColor: '#8b7355',
+          patternOpacity: 0.2,
+        },
+      },
+      particles: {
+        enabled: true,
+        color: '#7ab07a',
+        count: 10,
+        size: 3,
+        speed: 10,
+      },
+      glow: {
+        primary: 'rgba(74, 103, 65, 0.3)',
+        secondary: 'rgba(107, 142, 123, 0.25)',
+        accent: 'rgba(139, 115, 85, 0.35)',
+      },
+    },
   },
 
   brocade: {
@@ -577,6 +830,55 @@ export const heritageThemes: Record<HeritageThemeId, HeritageTheme> = {
       region: '苏州、成都',
       heritageItems: ['苏绣', '蜀锦织造技艺', '云锦'],
     },
+    visual: {
+      heritageImage: {
+        id: 4,
+        name: '银花丝',
+        gradient: 'linear-gradient(135deg, #C0C0C0 0%, #E8E8E8 50%, #FFD700 100%)',
+        keywords: ['银饰', '编织', '金银', '华贵'],
+      },
+      patterns: {
+        background: {
+          id: 'brocade-bg',
+          name: '织锦纹样',
+          description: '织锦风格的几何纹样',
+          svgPattern: createBrocadePattern('#c41e3a', 0.1),
+          backgroundColor: '#fefcfa',
+          patternColor: '#c41e3a',
+          patternOpacity: 0.1,
+        },
+        border: {
+          id: 'brocade-border',
+          name: '锦绣边框',
+          description: '锦绣风格的边框纹样',
+          svgPattern: createBrocadePattern('#f4a460', 0.2),
+          backgroundColor: 'transparent',
+          patternColor: '#f4a460',
+          patternOpacity: 0.2,
+        },
+        decoration: {
+          id: 'brocade-deco',
+          name: '锦绣装饰',
+          description: '锦绣风格的装饰元素',
+          svgPattern: createBrocadePattern('#2e8b57', 0.25),
+          backgroundColor: 'transparent',
+          patternColor: '#2e8b57',
+          patternOpacity: 0.25,
+        },
+      },
+      particles: {
+        enabled: true,
+        color: '#f06078',
+        count: 14,
+        size: 4,
+        speed: 7,
+      },
+      glow: {
+        primary: 'rgba(196, 30, 58, 0.35)',
+        secondary: 'rgba(244, 164, 96, 0.3)',
+        accent: 'rgba(46, 139, 87, 0.4)',
+      },
+    },
   },
 };
 
@@ -593,30 +895,11 @@ export const getThemeColors = (
   return heritageThemes[id].colors[mode];
 };
 
-export const defaultThemeId: HeritageThemeId = 'ink-wash';
-
-export const heritageThemeGradients = {
-  'ink-wash': {
-    preview: 'linear-gradient(135deg, #1a1a1a 0%, #4a4a4a 50%, #c41e3a 100%)',
-    decorative: 'linear-gradient(45deg, rgba(0,0,0,0.8) 0%, rgba(139,69,19,0.3) 100%)',
-  },
-  'blue-porcelain': {
-    preview: 'linear-gradient(135deg, #0d2847 0%, #1e4d8c 50%, #d4a574 100%)',
-    decorative: 'linear-gradient(45deg, rgba(30,77,140,0.8) 0%, rgba(212,165,116,0.3) 100%)',
-  },
-  dunhuang: {
-    preview: 'linear-gradient(135deg, #7a5a07 0%, #b8860b 50%, #c54b3c 100%)',
-    decorative: 'linear-gradient(45deg, rgba(184,134,11,0.8) 0%, rgba(197,75,60,0.3) 100%)',
-  },
-  jiangnan: {
-    preview: 'linear-gradient(135deg, #2a4721 0%, #4a6741 50%, #6b8e7b 100%)',
-    decorative: 'linear-gradient(45deg, rgba(74,103,65,0.8) 0%, rgba(107,142,123,0.3) 100%)',
-  },
-  brocade: {
-    preview: 'linear-gradient(135deg, #84142a 0%, #c41e3a 50%, #f4a460 100%)',
-    decorative: 'linear-gradient(45deg, rgba(196,30,58,0.8) 0%, rgba(244,164,96,0.3) 100%)',
-  },
+export const getThemeVisual = (id: HeritageThemeId): ThemeVisual => {
+  return heritageThemes[id].visual;
 };
+
+export const defaultThemeId: HeritageThemeId = 'ink-wash';
 
 export const applyHeritageTheme = (themeId: HeritageThemeId, mode: 'light' | 'dark') => {
   const theme = heritageThemes[themeId];
@@ -626,53 +909,41 @@ export const applyHeritageTheme = (themeId: HeritageThemeId, mode: 'light' | 'da
   root.setAttribute('data-theme', themeId);
   root.setAttribute('data-mode', mode);
 
-  const cssVariables: Record<string, string> = {
-    '--theme-name': colors.name,
-    '--color-primary': colors.primary,
-    '--color-primary-hover': colors.primaryHover,
-    '--color-primary-light': colors.primaryLight,
-    '--color-primary-dark': colors.primaryDark,
-    '--color-secondary': colors.secondary,
-    '--color-secondary-hover': colors.secondaryHover,
-    '--color-accent': colors.accent,
-    '--color-accent-hover': colors.accentHover,
-    '--color-background': colors.background,
-    '--color-background-secondary': colors.backgroundSecondary,
-    '--color-background-tertiary': colors.backgroundTertiary,
-    '--color-surface': colors.surface,
-    '--color-surface-hover': colors.surfaceHover,
-    '--color-text-primary': colors.textPrimary,
-    '--color-text-secondary': colors.textSecondary,
-    '--color-text-muted': colors.textMuted,
-    '--color-text-inverse': colors.textInverse,
-    '--color-border': colors.border,
-    '--color-border-light': colors.borderLight,
-    '--color-border-focus': colors.borderFocus,
-    '--color-success': colors.success,
-    '--color-warning': colors.warning,
-    '--color-error': colors.error,
-    '--color-info': colors.info,
-    '--color-shadow': colors.shadow,
-    '--color-shadow-glow': colors.shadowGlow,
-    '--gradient-primary': colors.gradientPrimary,
-    '--gradient-secondary': colors.gradientSecondary,
-    '--gradient-accent': colors.gradientAccent,
-    '--gradient-background': colors.gradientBackground,
-    '--gradient-card': colors.gradientCard,
-    '--font-heading': theme.typography.headingFont,
-    '--font-body': theme.typography.bodyFont,
-    '--font-mono': theme.typography.monoFont,
-  };
+  root.style.setProperty('--theme-name', theme.name);
 
-  Object.entries(cssVariables).forEach(([key, value]) => {
-    root.style.setProperty(key, value);
+  Object.entries(colors).forEach(([key, value]) => {
+    const cssKey = key.replace(/([A-Z])/g, '-$1').toLowerCase();
+    root.style.setProperty(`--color-${cssKey}`, value);
   });
 
-  if (mode === 'dark') {
-    root.classList.add('dark');
-    root.classList.remove('light');
-  } else {
-    root.classList.add('light');
-    root.classList.remove('dark');
-  }
+  root.style.setProperty('--font-heading', theme.typography.headingFont);
+  root.style.setProperty('--font-body', theme.typography.bodyFont);
+  root.style.setProperty('--font-mono', theme.typography.monoFont);
+
+  const visual = theme.visual;
+  root.style.setProperty('--pattern-bg', visual.patterns.background.svgPattern);
+  root.style.setProperty('--pattern-border', visual.patterns.border.svgPattern);
+  root.style.setProperty('--pattern-decoration', visual.patterns.decoration.svgPattern);
+  root.style.setProperty('--particle-color', visual.particles.color);
+  root.style.setProperty('--glow-primary', visual.glow.primary);
+  root.style.setProperty('--glow-secondary', visual.glow.secondary);
+  root.style.setProperty('--glow-accent', visual.glow.accent);
+};
+
+export const heritageThemeGradients: Record<HeritageThemeId, { preview: string }> = {
+  'ink-wash': {
+    preview: 'linear-gradient(135deg, #2c2c2c 0%, #8b4513 50%, #c41e3a 100%)',
+  },
+  'blue-porcelain': {
+    preview: 'linear-gradient(135deg, #1e4d8c 0%, #4a90c2 50%, #d4a574 100%)',
+  },
+  dunhuang: {
+    preview: 'linear-gradient(135deg, #b8860b 0%, #c54b3c 50%, #2e8b57 100%)',
+  },
+  jiangnan: {
+    preview: 'linear-gradient(135deg, #4a6741 0%, #6b8e7b 50%, #8b7355 100%)',
+  },
+  brocade: {
+    preview: 'linear-gradient(135deg, #c41e3a 0%, #f4a460 50%, #2e8b57 100%)',
+  },
 };

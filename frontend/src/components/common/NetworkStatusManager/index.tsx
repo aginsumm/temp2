@@ -27,7 +27,6 @@ import { useToast } from '../Toast';
 
 interface NetworkStatusManagerProps {
   mode?: 'minimal' | 'compact' | 'full';
-  position?: 'top-right' | 'bottom-right' | 'top-bar';
   showDetails?: boolean;
   showLatency?: boolean;
   showQueue?: boolean;
@@ -37,7 +36,6 @@ interface NetworkStatusManagerProps {
 
 export default function NetworkStatusManager({
   mode = 'compact',
-  position = 'top-right',
   showDetails = true,
   showLatency = true,
   showQueue = true,
@@ -58,7 +56,6 @@ export default function NetworkStatusManager({
   const [latencyHistory, setLatencyHistory] = useState<number[]>([]);
   const quality = getConnectionQuality(latency);
   const isAnimating = status === 'reconnecting' || isManualReconnect;
-  const isOffline = status === 'offline' || !httpAvailable;
 
   useEffect(() => {
     if (latency !== null) {

@@ -1,17 +1,19 @@
+# 个人文档（不提交）
 个人文档/
 
+# ============================================
 # Node.js
+# ============================================
 node_modules/
 dist/
 build/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
+*.tgz
+output/
 *.tsbuildinfo
 
+# ============================================
 # Python
+# ============================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -31,56 +33,61 @@ htmlcov/
 .eggs/
 .tox/
 
-# Environment variables
+# ============================================
+# 环境变量（非常重要，不能提交）
+# ============================================
 .env
 .env.local
 .env.*.local
-.env.development.local
-.env.test.local
-.env.production.local
 .env.example.bak
+.env.backup
+.env.*.backup
 
-# IDE
+# ============================================
+# IDE 和编辑器
+# ============================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.DS_Store
-Thumbs.db
 *.sublime-project
 *.sublime-workspace
 
-# Docker
-*.log
-docker-compose.override.yml
-
-# OS
+# ============================================
+# 操作系统
+# ============================================
 .DS_Store
 Thumbs.db
-*.bak
-*.tmp
 Desktop.ini
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 
-# Build outputs
-dist/
-build/
-*.tgz
-output/
-coverage/
-.nyc_output/
+# ============================================
+# Docker
+# ============================================
+docker-compose.override.yml
 
-# Logs
+# ============================================
+# 日志
+# ============================================
 logs/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
+# ============================================
+# 测试覆盖率
+# ============================================
 .nyc_output/
+coverage/
 
-# Cache
+# ============================================
+# 缓存
+# ============================================
 .cache/
 .parcel-cache/
 .next/
@@ -90,70 +97,59 @@ htmlcov/
 .fusebox/
 .dynamodb/
 .tern-port
-
-# Misc
-*.pid
-*.seed
-*.pid.lock
-.env.backup
-.env.local.backup
-.env.development.backup
-.env.production.backup
-
-# TypeScript
-*.tsbuildinfo
-
-# ESLint & Prettier
 .eslintcache
 .prettiercache
 
-# Temporary files
+# ============================================
+# 临时文件
+# ============================================
 *.temp
 *.tmp
-*.swp
-*.swo
-*~
+*.bak
+*.old
+*.backup
+*.pid
+*.seed
+*.pid.lock
 
-# Lock files (optional - uncomment if you want to ignore them)
-# package-lock.json
-# yarn.lock
-# pnpm-lock.yaml
-
-# Database
+# ============================================
+# 数据库
+# ============================================
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
+instance/
 
-# Secrets
+# ============================================
+# 密钥和证书（非常重要，不能提交）
+# ============================================
 *.pem
 *.key
 *.crt
 secrets/
 credentials/
 
-# Backup files
-*.backup
-*.bak
-*.old
-
-# Fonts
+# ============================================
+# 字体文件（如需要提交字体，请修改此规则）
+# ============================================
 frontend/public/fonts/
-**/fonts/*.ttf
-**/fonts/*.otf
-**/fonts/*.woff
-**/fonts/*.woff2
-*.ttf
-*.otf
-*.woff
-*.woff2
 
-# Backend specific
+# ============================================
+# 后端特定
+# ============================================
 celerybeat-schedule
 celerybeat.pid
-*.db-shm
-*.db-wal
-instance/
-data/
+/data/
+/backend/data/
 uploads/
 media/
 staticfiles/
+
+# ============================================
+# Lock files（可选 - 如需忽略请取消注释）
+# ============================================
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml

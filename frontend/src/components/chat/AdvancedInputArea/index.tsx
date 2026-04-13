@@ -51,7 +51,7 @@ const quickCommands = [
 ];
 
 interface AdvancedInputAreaProps {
-  onSend: (content: string, options?: { command?: string }) => void;
+  onSend: (content: string, options?: { command?: string }) => void | Promise<void>;
   isLoading?: boolean;
   isStreaming?: boolean;
   placeholder?: string;
@@ -94,7 +94,12 @@ export default function AdvancedInputArea({
 
   const handleSend = useCallback(() => {
     if (inputValue.trim() && !disabled && !isLoading && charCount <= MAX_CHARS) {
-      onSend(inputValue.trim(), { command: selectedCommand || undefined });
+      const result = onSend(inputValue.trim(), { command: selectedCommand || undefined });
+      if (result instanceof Promise) {
+        result.catch((error) => {
+          console.error('Error sending message:', error);
+        });
+      }
       setInputValue('');
       setCharCount(0);
       setSelectedCommand(null);

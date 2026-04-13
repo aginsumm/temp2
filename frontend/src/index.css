@@ -33,7 +33,9 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  transition: background-color 0.3s ease, color 0.3s ease;
+  transition:
+    background-color 0.3s ease,
+    color 0.3s ease;
 }
 
 #root {
@@ -186,38 +188,38 @@ img {
   }
 
   .entity-tag-inheritor {
-    background: rgba(139, 92, 246, 0.15);
-    color: #8b5cf6;
+    background: var(--color-entity-inheritor-bg, rgba(139, 92, 246, 0.15));
+    color: var(--color-entity-inheritor, #8b5cf6);
   }
 
   .entity-tag-technique {
-    background: rgba(16, 185, 129, 0.15);
-    color: #10b981;
+    background: var(--color-entity-technique-bg, rgba(16, 185, 129, 0.15));
+    color: var(--color-entity-technique, #10b981);
   }
 
   .entity-tag-work {
-    background: rgba(245, 158, 11, 0.15);
-    color: #f59e0b;
+    background: var(--color-entity-work-bg, rgba(245, 158, 11, 0.15));
+    color: var(--color-entity-work, #f59e0b);
   }
 
   .entity-tag-pattern {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
+    background: var(--color-entity-pattern-bg, rgba(239, 68, 68, 0.15));
+    color: var(--color-entity-pattern, #ef4444);
   }
 
   .entity-tag-region {
-    background: rgba(6, 182, 212, 0.15);
-    color: #06b6d4;
+    background: var(--color-entity-region-bg, rgba(6, 182, 212, 0.15));
+    color: var(--color-entity-region, #06b6d4);
   }
 
   .entity-tag-period {
-    background: rgba(99, 102, 241, 0.15);
-    color: #6366f1;
+    background: var(--color-entity-period-bg, rgba(99, 102, 241, 0.15));
+    color: var(--color-entity-period, #6366f1);
   }
 
   .entity-tag-material {
-    background: rgba(132, 204, 22, 0.15);
-    color: #84cc16;
+    background: var(--color-entity-material-bg, rgba(132, 204, 22, 0.15));
+    color: var(--color-entity-material, #84cc16);
   }
 
   .graph-node {
@@ -279,8 +281,9 @@ img {
 
   .border-heritage-gradient {
     border: 2px solid transparent;
-    background: linear-gradient(var(--color-surface), var(--color-surface)) padding-box,
-                var(--gradient-primary) border-box;
+    background:
+      linear-gradient(var(--color-surface), var(--color-surface)) padding-box,
+      var(--gradient-primary) border-box;
   }
 
   .glow-heritage {
@@ -288,36 +291,37 @@ img {
   }
 
   .glow-heritage-lg {
-    box-shadow: 0 0 30px var(--color-shadow-glow),
-                0 0 60px var(--color-shadow-glow);
+    box-shadow:
+      0 0 30px var(--color-shadow-glow),
+      0 0 60px var(--color-shadow-glow);
   }
 
   .node-glow-inheritor {
-    filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.6));
+    filter: drop-shadow(0 0 8px var(--color-entity-inheritor, rgba(139, 92, 246, 0.6)));
   }
 
   .node-glow-technique {
-    filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.6));
+    filter: drop-shadow(0 0 8px var(--color-entity-technique, rgba(16, 185, 129, 0.6)));
   }
 
   .node-glow-work {
-    filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.6));
+    filter: drop-shadow(0 0 8px var(--color-entity-work, rgba(245, 158, 11, 0.6)));
   }
 
   .node-glow-pattern {
-    filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.6));
+    filter: drop-shadow(0 0 8px var(--color-entity-pattern, rgba(239, 68, 68, 0.6)));
   }
 
   .node-glow-region {
-    filter: drop-shadow(0 0 8px rgba(6, 182, 212, 0.6));
+    filter: drop-shadow(0 0 8px var(--color-entity-region, rgba(6, 182, 212, 0.6)));
   }
 
   .node-glow-period {
-    filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.6));
+    filter: drop-shadow(0 0 8px var(--color-entity-period, rgba(99, 102, 241, 0.6)));
   }
 
   .node-glow-material {
-    filter: drop-shadow(0 0 8px rgba(132, 204, 22, 0.6));
+    filter: drop-shadow(0 0 8px var(--color-entity-material, rgba(132, 204, 22, 0.6)));
   }
 }
 
@@ -420,7 +424,8 @@ img {
 }
 
 @keyframes pulseSubtle {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
   }
   50% {
@@ -429,7 +434,8 @@ img {
 }
 
 @keyframes bounceSubtle {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0);
   }
   50% {
@@ -447,7 +453,8 @@ img {
 }
 
 @keyframes float {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0);
   }
   50% {
@@ -456,7 +463,8 @@ img {
 }
 
 @keyframes pulseGlow {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow: 0 0 20px var(--color-shadow-glow);
   }
   50% {

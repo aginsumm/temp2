@@ -108,10 +108,14 @@ export const useChatStore = create<ChatState>()(
         if (get().isDataLoaded) return;
         try {
           await dataInitializer.initialize();
-          await get().loadSessionsFromDB();
-          set({ isDataLoaded: true });
+          const sessions = await chatRepository.getAllSessions();
+          set({ 
+            sessions: pruneSessions(sessions),
+            isDataLoaded: true 
+          });
         } catch (e) {
           console.error('Failed to initialize data:', e);
+          set({ isDataLoaded: true });
         }
       },
 
@@ -166,7 +170,9 @@ export const useChatStore = create<ChatState>()(
         });
 
         if (apiAdapterManager.shouldUseRemote()) {
-          syncManager.addOperation('create_session', newSession).catch(() => {});
+          syncManager
+            .addOperation('create_session', newSession as unknown as Record<string, unknown>)
+            .catch(() => {});
         }
 
         return newSession;
@@ -291,6 +297,12 @@ export const useChatStore = create<ChatState>()(
       addMessage: async (message) => {
         await chatRepository.saveMessage(message);
 
+        if (apiAdapterManager.shouldUseRemote()) {
+          syncManager
+            .addOperation('create_message', message as unknown as Record<string, unknown>)
+            .catch(() => {});
+        }
+
         set((state) => {
           const sessionId = message.session_id;
           const currentMessages = state.messagesBySession[sessionId] || [];
@@ -334,11 +346,28 @@ export const useChatStore = create<ChatState>()(
       updateMessage: async (id, updates) => {
         await chatRepository.updateMessage(id, updates);
 
-        set((state) => {
-          const currentSessionId = state.currentSessionId;
-          if (!currentSessionId) return state;
+        if (apiAdapterManager.shouldUseRemote()) {
+          syncManager.addOperation('update_message', { id, ...updates }).catch(() => {});
+        }
 
-          const sessionMessages = state.messagesBySession[currentSessionId] || [];
+        set((state) => {
+          // 查找消息所属的会话
+          let targetSessionId: string | null = null;
+          for (const [sessionId, msgs] of Object.entries(state.messagesBySession)) {
+            if (msgs.some((m) => m.id === id)) {
+              targetSessionId = sessionId;
+              break;
+            }
+          }
+
+          // 如果没找到，尝试使用 currentSessionId
+          if (!targetSessionId) {
+            targetSessionId = state.currentSessionId;
+          }
+
+          if (!targetSessionId) return state;
+
+          const sessionMessages = state.messagesBySession[targetSessionId] || [];
           const updatedMessages = sessionMessages.map((m) => {
             if (m.id === id) {
               const updated = { ...m, ...updates };
@@ -353,29 +382,38 @@ export const useChatStore = create<ChatState>()(
           return {
             messagesBySession: {
               ...state.messagesBySession,
-              [currentSessionId]: updatedMessages,
+              [targetSessionId]: updatedMessages,
             },
           };
         });
       },
 
       deleteMessage: async (id) => {
+        // 先获取消息信息以确定所属会话
+        const message = await chatRepository.getMessage(id);
+        const sessionId = message?.session_id;
+
         await chatRepository.deleteMessage(id);
 
-        set((state) => {
-          const currentSessionId = state.currentSessionId;
-          if (!currentSessionId) return state;
+        if (apiAdapterManager.shouldUseRemote()) {
+          syncManager.addOperation('delete_message', { id }).catch(() => {});
+        }
 
-          const sessionMessages = state.messagesBySession[currentSessionId] || [];
+        set((state) => {
+          // 使用消息所属的会话ID，如果没有则使用当前会话
+          const targetSessionId = sessionId || state.currentSessionId;
+          if (!targetSessionId) return state;
+
+          const sessionMessages = state.messagesBySession[targetSessionId] || [];
           const filteredMessages = sessionMessages.filter((m) => m.id !== id);
 
           return {
             messagesBySession: {
               ...state.messagesBySession,
-              [currentSessionId]: filteredMessages,
+              [targetSessionId]: filteredMessages,
             },
             sessions: state.sessions.map((s) =>
-              s.id === currentSessionId ? { ...s, message_count: filteredMessages.length } : s
+              s.id === targetSessionId ? { ...s, message_count: filteredMessages.length } : s
             ),
           };
         });
@@ -508,8 +546,20 @@ export const useChatStore = create<ChatState>()(
 
       addMessageVersion: (messageId: string, content: string) => {
         set((state) => {
-          const currentSessionId = state.currentSessionId;
-          if (!currentSessionId) return state;
+          // 查找消息所属的会话
+          let targetSessionId: string | null = null;
+          for (const [sessionId, msgs] of Object.entries(state.messagesBySession)) {
+            if (msgs.some((m) => m.id === messageId)) {
+              targetSessionId = sessionId;
+              break;
+            }
+          }
+
+          if (!targetSessionId) {
+            targetSessionId = state.currentSessionId;
+          }
+
+          if (!targetSessionId) return state;
 
           const newVersion: MessageVersion = {
             id: `version_${Date.now()}`,
@@ -518,7 +568,7 @@ export const useChatStore = create<ChatState>()(
             is_current: true,
           };
 
-          const sessionMessages = state.messagesBySession[currentSessionId] || [];
+          const sessionMessages = state.messagesBySession[targetSessionId] || [];
           const updatedMessages = sessionMessages.map((m) => {
             if (m.id === messageId) {
               const versions = pruneVersions([
@@ -549,7 +599,7 @@ export const useChatStore = create<ChatState>()(
           return {
             messagesBySession: {
               ...state.messagesBySession,
-              [currentSessionId]: updatedMessages,
+              [targetSessionId]: updatedMessages,
             },
           };
         });
@@ -557,10 +607,22 @@ export const useChatStore = create<ChatState>()(
 
       switchMessageVersion: (messageId, versionId) => {
         set((state) => {
-          const currentSessionId = state.currentSessionId;
-          if (!currentSessionId) return state;
+          // 查找消息所属的会话
+          let targetSessionId: string | null = null;
+          for (const [sessionId, msgs] of Object.entries(state.messagesBySession)) {
+            if (msgs.some((m) => m.id === messageId)) {
+              targetSessionId = sessionId;
+              break;
+            }
+          }
 
-          const sessionMessages = state.messagesBySession[currentSessionId] || [];
+          if (!targetSessionId) {
+            targetSessionId = state.currentSessionId;
+          }
+
+          if (!targetSessionId) return state;
+
+          const sessionMessages = state.messagesBySession[targetSessionId] || [];
           const updatedMessages = sessionMessages.map((m) => {
             if (m.id === messageId && m.versions) {
               const updatedVersions = m.versions.map((v) => ({
@@ -590,7 +652,7 @@ export const useChatStore = create<ChatState>()(
           return {
             messagesBySession: {
               ...state.messagesBySession,
-              [currentSessionId]: updatedMessages,
+              [targetSessionId]: updatedMessages,
             },
           };
         });
@@ -598,10 +660,23 @@ export const useChatStore = create<ChatState>()(
 
       editAndRegenerate: (messageId, newContent) => {
         const state = get();
-        const currentSessionId = state.currentSessionId;
-        if (!currentSessionId) return;
 
-        const sessionMessages = state.messagesBySession[currentSessionId] || [];
+        // 查找消息所属的会话
+        let targetSessionId: string | null = null;
+        for (const [sessionId, msgs] of Object.entries(state.messagesBySession)) {
+          if (msgs.some((m) => m.id === messageId)) {
+            targetSessionId = sessionId;
+            break;
+          }
+        }
+
+        if (!targetSessionId) {
+          targetSessionId = state.currentSessionId;
+        }
+
+        if (!targetSessionId) return;
+
+        const sessionMessages = state.messagesBySession[targetSessionId] || [];
         const messageIndex = sessionMessages.findIndex((m) => m.id === messageId);
 
         if (messageIndex === -1) return;
@@ -614,13 +689,13 @@ export const useChatStore = create<ChatState>()(
         get().addMessageVersion(messageId, newContent);
 
         set((state) => {
-          if (!state.currentSessionId) return state;
+          if (!targetSessionId) return state;
 
-          const messages = state.messagesBySession[state.currentSessionId] || [];
+          const messages = state.messagesBySession[targetSessionId] || [];
           return {
             messagesBySession: {
               ...state.messagesBySession,
-              [state.currentSessionId]: messages.map((m) => {
+              [targetSessionId]: messages.map((m) => {
                 if (m.id === messageId) {
                   return { ...m, version_group_id: versionGroupId };
                 }
@@ -633,10 +708,22 @@ export const useChatStore = create<ChatState>()(
 
       syncVersionForGroup: (versionGroupId, versionIndex) => {
         set((state) => {
-          const currentSessionId = state.currentSessionId;
-          if (!currentSessionId) return state;
+          // 查找包含该 version_group_id 的会话
+          let targetSessionId: string | null = null;
+          for (const [sessionId, msgs] of Object.entries(state.messagesBySession)) {
+            if (msgs.some((m) => m.version_group_id === versionGroupId)) {
+              targetSessionId = sessionId;
+              break;
+            }
+          }
 
-          const sessionMessages = state.messagesBySession[currentSessionId] || [];
+          if (!targetSessionId) {
+            targetSessionId = state.currentSessionId;
+          }
+
+          if (!targetSessionId) return state;
+
+          const sessionMessages = state.messagesBySession[targetSessionId] || [];
           const updatedMessages = sessionMessages.map((m) => {
             if (
               m.version_group_id === versionGroupId &&
@@ -660,7 +747,7 @@ export const useChatStore = create<ChatState>()(
           return {
             messagesBySession: {
               ...state.messagesBySession,
-              [currentSessionId]: updatedMessages,
+              [targetSessionId]: updatedMessages,
             },
           };
         });

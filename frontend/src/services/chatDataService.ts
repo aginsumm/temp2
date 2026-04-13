@@ -175,7 +175,9 @@ class ChatDataService implements UnifiedChatService {
             clearTimeout(streamState.timeoutId);
           }
           cleanup();
-          onComplete(message);
+          Promise.resolve(onComplete(message)).catch((err) => {
+            console.error('Error in onComplete callback:', err);
+          });
         }
       },
       (error) => {

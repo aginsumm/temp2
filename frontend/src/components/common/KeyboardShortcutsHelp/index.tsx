@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Keyboard, X, Command, Search, ZoomIn, ZoomOut, RotateCcw, Plus, Minus, HelpCircle } from 'lucide-react';
+import { Keyboard, X, Command, Search, ZoomIn, RotateCcw, Plus, Minus, HelpCircle } from 'lucide-react';
 
 interface ShortcutItem {
   keys: string[];

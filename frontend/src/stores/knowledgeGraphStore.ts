@@ -145,12 +145,18 @@ const useKnowledgeGraphStore = create<KnowledgeGraphStore>()(
 
       addFavorite: async (userId: string, entityId: string) => {
         try {
-          await knowledgeRepository.addFavorite(userId, entityId);
+          const entity = await knowledgeRepository.getEntity(entityId);
+          const entityType = entity?.type || 'unknown';
+          const entityName = entity?.name || 'Unknown';
+
+          await knowledgeRepository.addFavorite(userId, entityId, entityType, entityName);
 
           const newFavorite: FavoriteItem = {
             id: `fav_${Date.now()}`,
             user_id: userId,
             entity_id: entityId,
+            entity_type: entityType,
+            entity_name: entityName,
             created_at: new Date().toISOString(),
           };
           set((state) => ({
@@ -214,7 +220,7 @@ const useKnowledgeGraphStore = create<KnowledgeGraphStore>()(
       loadFeedbacks: async (entityId: string) => {
         set({ isLoadingFeedbacks: true });
         try {
-          const feedbacks = await knowledgeRepository.getFeedbacksByEntity(entityId);
+          const feedbacks = await knowledgeRepository.getFeedbacks(entityId);
           set({ feedbacks, isLoadingFeedbacks: false });
         } catch (error) {
           console.warn('Failed to load feedbacks:', error);
@@ -225,7 +231,7 @@ const useKnowledgeGraphStore = create<KnowledgeGraphStore>()(
       loadUserFeedbacks: async (userId: string) => {
         set({ isLoadingFeedbacks: true });
         try {
-          const feedbacks = await knowledgeRepository.getFeedbacksByUser(userId);
+          const feedbacks = await knowledgeRepository.getUserFeedbacks(userId);
           set({ feedbacks, isLoadingFeedbacks: false });
         } catch (error) {
           console.warn('Failed to load user feedbacks:', error);
@@ -241,13 +247,7 @@ const useKnowledgeGraphStore = create<KnowledgeGraphStore>()(
         rating?: number
       ) => {
         try {
-          await knowledgeRepository.addFeedback({
-            user_id: userId,
-            entity_id: entityId,
-            feedback_type: feedbackType,
-            content,
-            rating,
-          });
+          await knowledgeRepository.addFeedback(userId, entityId, feedbackType, content, rating);
 
           const newFeedback: FeedbackItem = {
             id: `fb_${Date.now()}`,

@@ -5,7 +5,7 @@ import { useChatStore } from '../../stores/chatStore';
 import { useUIStore } from '../../stores/uiStore';
 import { chatDataService } from '../../services/chat';
 import { useToast } from '../../components/common/Toast';
-import type { Session, Entity, Source, Message } from '../../types/chat';
+import type { Entity, Source, Message } from '../../types/chat';
 
 import Sidebar from '../../components/chat/Sidebar';
 import RightPanel from '../../components/chat/RightPanel';
@@ -30,10 +30,9 @@ export default function EnhancedChatPage() {
   const [currentEntities, setCurrentEntities] = useState<Entity[]>([]);
   const [currentKeywords, setCurrentKeywords] = useState<string[]>([]);
   const [currentSources, setCurrentSources] = useState<Source[]>([]);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [recommendedQuestions, setRecommendedQuestions] = useState<
-    { id: string; question: string; category?: string }[]
-  >([]);
+  const [recommendedQuestions] = useState<{ id: string; question: string; category?: string }[]>(
+    []
+  );
   const [isInitialized, setIsInitialized] = useState(false);
   const [newMessageIds, setNewMessageIds] = useState(new Set<string>());
   const [quotedMessage, setQuotedMessage] = useState<Message | null>(null);
@@ -56,14 +55,16 @@ export default function EnhancedChatPage() {
     switchSession,
     addMessage,
     updateMessage,
+    deleteMessage,
     setLoading,
     setStreaming,
     setError,
-    setSessions,
-    setMessages,
     pinSession,
     updateSessionTitle,
     deleteSession,
+    createSession,
+    addMessageVersion,
+    switchMessageVersion,
   } = useChatStore();
 
   const messages = useMemo(
@@ -116,19 +117,26 @@ export default function EnhancedChatPage() {
   useEffect(() => {
     const initChat = async () => {
       try {
-        const fetchedSessions = await chatDataService.getSessions();
-        setSessions(fetchedSessions);
+        // 使用 Store 的 initializeData 方法，统一管理初始化流程
+        const {
+          initializeData,
+          createSession,
+          switchSession: switchSess,
+        } = useChatStore.getState();
+
+        await initializeData();
+
+        // 在 initializeData 完成后重新获取最新的 sessions
+        const fetchedSessions = useChatStore.getState().sessions;
 
         if (sessionId && fetchedSessions.some((s) => s.id === sessionId)) {
-          await switchSession(sessionId);
+          await switchSess(sessionId);
         } else if (fetchedSessions.length > 0) {
           const firstSessionId = fetchedSessions[0].id;
-          await switchSession(firstSessionId);
+          await switchSess(firstSessionId);
         } else {
-          const newSession = await chatDataService.createSession();
-          setSessions([newSession]);
-          switchSession(newSession.id);
-          setMessages([]);
+          const newSession = await createSession();
+          await switchSess(newSession.id);
         }
 
         setIsInitialized(true);
@@ -139,7 +147,7 @@ export default function EnhancedChatPage() {
     };
 
     initChat();
-  }, [sessionId, setSessions, switchSession, setMessages]);
+  }, [sessionId]);
 
   useEffect(() => {
     if (autoScroll && messagesEndRef.current) {
@@ -163,17 +171,14 @@ export default function EnhancedChatPage() {
 
   const handleCreateSession = useCallback(async () => {
     try {
-      const newSession = await chatDataService.createSession();
-      setSessions((prev: Session[]) => [newSession, ...prev]);
-      switchSession(newSession.id);
-      setMessages([]);
+      const newSession = await createSession();
       return newSession;
     } catch (error) {
       console.error('Failed to create session:', error);
       toast.error('创建失败', '无法创建新对话');
       return null;
     }
-  }, [setSessions, switchSession, setMessages, toast]);
+  }, [createSession, toast]);
 
   const startStreamingResponse = useCallback(
     async (sessionId: string, userContent: string, streamingMsgId: string) => {
@@ -181,7 +186,7 @@ export default function EnhancedChatPage() {
       setStreaming(true);
       setStreamingContent('');
 
-      updateMessage(streamingMsgId, { isStreaming: true });
+      await updateMessage(streamingMsgId, { isStreaming: true });
 
       let accumulatedContent = '';
 
@@ -196,9 +201,10 @@ export default function EnhancedChatPage() {
             isStreaming: true,
           });
         },
-        (aiMessage) => {
+        async (aiMessage) => {
           setStreamingContent('');
-          updateMessage(streamingMsgId, {
+
+          await updateMessage(streamingMsgId, {
             content: aiMessage.content,
             sources: aiMessage.sources,
             entities: aiMessage.entities,
@@ -220,11 +226,12 @@ export default function EnhancedChatPage() {
           setLoading(false);
           setStreaming(false);
         },
-        (error) => {
+        async (error) => {
           setStreamingContent('');
           setLoading(false);
           setStreaming(false);
-          updateMessage(streamingMsgId, {
+
+          await updateMessage(streamingMsgId, {
             content: '抱歉，生成回复时出现错误。请重试。',
             isStreaming: false,
           });
@@ -234,51 +241,77 @@ export default function EnhancedChatPage() {
 
       return abort;
     },
-    [updateMessage, setLoading, setStreaming, setStreamingContent, toast]
+    [
+      updateMessage,
+      setLoading,
+      setStreaming,
+      setStreamingContent,
+      setNewMessageIds,
+      setCurrentEntities,
+      setCurrentKeywords,
+      setCurrentSources,
+      toast,
+    ]
   );
 
   const handleSendMessage = useCallback(
     async (content: string) => {
-      let activeSessionId = currentSessionId;
-
-      if (!activeSessionId) {
-        if (sessions.length > 0) {
-          activeSessionId = sessions[0].id;
-          switchSession(activeSessionId);
-        } else {
-          const newSession = await handleCreateSession();
-          if (!newSession) return;
-          activeSessionId = newSession.id;
-        }
+      if (!content || !content.trim()) {
+        console.warn('Empty message content');
+        return;
       }
 
-      const userMessage = {
-        id: `msg_${Date.now()}_user`,
-        session_id: activeSessionId,
-        role: 'user' as const,
-        content: quotedMessage ? `> ${quotedMessage.content}\n\n${content}` : content,
-        created_at: new Date().toISOString(),
-        quoted_message: quotedMessage ? quotedMessage.id : undefined,
-      };
+      try {
+        let activeSessionId = currentSessionId;
 
-      addMessage(userMessage);
-      setNewMessageIds((prev) => new Set([...prev, userMessage.id]));
-      setQuotedMessage(null);
+        if (!activeSessionId) {
+          if (sessions.length > 0 && sessions[0]?.id) {
+            activeSessionId = sessions[0].id;
+            await switchSession(activeSessionId);
+          } else {
+            const newSession = await handleCreateSession();
+            if (!newSession || !newSession.id) {
+              toast.error('创建失败', '无法创建新对话');
+              return;
+            }
+            activeSessionId = newSession.id;
+          }
+        }
 
-      const streamingMsgId = `msg_${Date.now()}_assistant_streaming`;
+        const userMessage = {
+          id: `msg_${Date.now()}_user`,
+          session_id: activeSessionId,
+          role: 'user' as const,
+          content: quotedMessage ? `> ${quotedMessage.content}\n\n${content}` : content,
+          created_at: new Date().toISOString(),
+          quoted_message: quotedMessage ? quotedMessage.id : undefined,
+        };
 
-      const streamingMessage: Message = {
-        id: streamingMsgId,
-        session_id: activeSessionId,
-        role: 'assistant',
-        content: '',
-        created_at: new Date().toISOString(),
-        isStreaming: true,
-      };
-      addMessage(streamingMessage);
+        await addMessage(userMessage);
+        setNewMessageIds((prev) => new Set([...prev, userMessage.id]));
+        setQuotedMessage(null);
 
-      const abort = await startStreamingResponse(activeSessionId, content, streamingMsgId);
-      abortControllerRef.current = abort;
+        const streamingMsgId = `msg_${Date.now()}_assistant_streaming`;
+
+        const streamingMessage: Message = {
+          id: streamingMsgId,
+          session_id: activeSessionId,
+          role: 'assistant',
+          content: '',
+          created_at: new Date().toISOString(),
+          isStreaming: true,
+        };
+        await addMessage(streamingMessage);
+
+        const abort = await startStreamingResponse(activeSessionId, content, streamingMsgId);
+        abortControllerRef.current = abort;
+      } catch (error) {
+        console.error('Error in handleSendMessage:', error);
+        setLoading(false);
+        setStreaming(false);
+        toast.error('发送失败', error instanceof Error ? error.message : '发送消息时发生错误');
+        throw error;
+      }
     },
     [
       currentSessionId,
@@ -288,6 +321,9 @@ export default function EnhancedChatPage() {
       switchSession,
       quotedMessage,
       startStreamingResponse,
+      toast,
+      setLoading,
+      setStreaming,
     ]
   );
 
@@ -305,11 +341,11 @@ export default function EnhancedChatPage() {
   const handleFeedback = useCallback(
     async (messageId: string, feedback: 'helpful' | 'unclear') => {
       try {
-        await chatDataService.submitFeedback(messageId, feedback);
-        updateMessage(messageId, { feedback });
+        await updateMessage(messageId, { feedback });
         toast.success('感谢反馈', '您的反馈将帮助我们改进');
       } catch (error) {
         console.error('Failed to submit feedback:', error);
+        toast.error('反馈失败', '无法提交反馈');
       }
     },
     [updateMessage, toast]
@@ -318,12 +354,13 @@ export default function EnhancedChatPage() {
   const handleFavorite = useCallback(
     async (messageId: string, currentStatus: boolean) => {
       try {
-        const is_favorite = await chatDataService.toggleFavorite(messageId, currentStatus);
-        updateMessage(messageId, { is_favorite });
-        toast.success(is_favorite ? '已收藏' : '已取消收藏');
+        const newStatus = !currentStatus;
+        await updateMessage(messageId, { is_favorite: newStatus });
+        toast.success(newStatus ? '已收藏' : '已取消收藏');
         window.dispatchEvent(new CustomEvent('favoriteChanged'));
       } catch (error) {
         console.error('Failed to toggle favorite:', error);
+        toast.error('操作失败', '无法更新收藏状态');
       }
     },
     [updateMessage, toast]
@@ -338,40 +375,14 @@ export default function EnhancedChatPage() {
   );
 
   const handleRegenerate = useCallback(
-    (messageId: string) => {
+    async (messageId: string) => {
       const messageIndex = messages.findIndex((m) => m.id === messageId);
-      if (messageIndex > 0) {
+      if (messageIndex > 0 && currentSessionId) {
         const userMessage = messages[messageIndex - 1];
         if (userMessage.role === 'user') {
-          handleSendMessage(userMessage.content);
-        }
-      }
-    },
-    [messages, handleSendMessage]
-  );
+          const aiMessage = messages[messageIndex];
 
-  const handleEdit = useCallback(
-    (messageId: string, newContent: string) => {
-      updateMessage(messageId, { content: newContent });
-      toast.success('已修改', '消息内容已更新');
-    },
-    [updateMessage, toast]
-  );
-
-  const handleSwitchVersion = useCallback((messageId: string, versionId: string) => {
-    const { switchMessageVersion } = useChatStore.getState();
-    switchMessageVersion(messageId, versionId);
-  }, []);
-
-  const handleEditAndRegenerate = useCallback(
-    async (messageId: string, newContent: string) => {
-      updateMessage(messageId, { content: newContent, is_edited: true });
-
-      const messageIndex = messages.findIndex((m) => m.id === messageId);
-      if (messageIndex >= 0) {
-        const nextMessage = messages[messageIndex + 1];
-        if (nextMessage && nextMessage.role === 'assistant' && currentSessionId) {
-          updateMessage(nextMessage.id, {
+          await updateMessage(aiMessage.id, {
             content: '',
             sources: [],
             entities: [],
@@ -379,36 +390,114 @@ export default function EnhancedChatPage() {
             isStreaming: true,
           });
 
-          const abort = await startStreamingResponse(currentSessionId, newContent, nextMessage.id);
-          abortControllerRef.current = abort;
-        } else if (currentSessionId) {
-          const streamingMsgId = `msg_${Date.now()}_assistant_streaming`;
-          const streamingMessage: Message = {
-            id: streamingMsgId,
-            session_id: currentSessionId,
-            role: 'assistant',
-            content: '',
-            created_at: new Date().toISOString(),
-            isStreaming: true,
-          };
-          addMessage(streamingMessage);
-
-          const abort = await startStreamingResponse(currentSessionId, newContent, streamingMsgId);
+          const abort = await startStreamingResponse(
+            currentSessionId,
+            userMessage.content,
+            aiMessage.id
+          );
           abortControllerRef.current = abort;
         }
-        toast.success('已重新生成', '答案已根据修改后的问题重新生成');
       }
     },
-    [messages, updateMessage, addMessage, toast, currentSessionId, startStreamingResponse]
+    [messages, currentSessionId, updateMessage, startStreamingResponse]
+  );
+
+  const handleEdit = useCallback(
+    async (messageId: string, newContent: string) => {
+      try {
+        addMessageVersion(messageId, newContent);
+        toast.success('已修改', '消息内容已更新');
+      } catch (error) {
+        console.error('Failed to edit message:', error);
+        toast.error('修改失败', '无法修改消息内容');
+      }
+    },
+    [addMessageVersion, toast]
+  );
+
+  const handleSwitchVersion = useCallback(
+    async (messageId: string, versionId: string) => {
+      try {
+        switchMessageVersion(messageId, versionId);
+      } catch (error) {
+        console.error('Failed to switch version:', error);
+        toast.error('切换失败', '无法切换消息版本');
+      }
+    },
+    [switchMessageVersion, toast]
+  );
+
+  const handleEditAndRegenerate = useCallback(
+    async (messageId: string, newContent: string) => {
+      try {
+        addMessageVersion(messageId, newContent);
+
+        const messageIndex = messages.findIndex((m) => m.id === messageId);
+        if (messageIndex >= 0) {
+          const nextMessage = messages[messageIndex + 1];
+          if (nextMessage && nextMessage.role === 'assistant' && currentSessionId) {
+            await updateMessage(nextMessage.id, {
+              content: '',
+              sources: [],
+              entities: [],
+              keywords: [],
+              isStreaming: true,
+            });
+
+            const abort = await startStreamingResponse(
+              currentSessionId,
+              newContent,
+              nextMessage.id
+            );
+            abortControllerRef.current = abort;
+          } else if (currentSessionId) {
+            const streamingMsgId = `msg_${Date.now()}_assistant_streaming`;
+            const streamingMessage: Message = {
+              id: streamingMsgId,
+              session_id: currentSessionId,
+              role: 'assistant',
+              content: '',
+              created_at: new Date().toISOString(),
+              isStreaming: true,
+            };
+            await addMessage(streamingMessage);
+
+            const abort = await startStreamingResponse(
+              currentSessionId,
+              newContent,
+              streamingMsgId
+            );
+            abortControllerRef.current = abort;
+          }
+          toast.success('已重新生成', '答案已根据修改后的问题重新生成');
+        }
+      } catch (error) {
+        console.error('Failed to edit and regenerate:', error);
+        toast.error('操作失败', '无法编辑并重新生成');
+      }
+    },
+    [
+      messages,
+      updateMessage,
+      addMessage,
+      addMessageVersion,
+      toast,
+      currentSessionId,
+      startStreamingResponse,
+    ]
   );
 
   const handleDelete = useCallback(
-    (messageId: string) => {
-      const newMessages = messages.filter((m) => m.id !== messageId);
-      setMessages(newMessages);
-      toast.success('已删除', '消息已删除');
+    async (messageId: string) => {
+      try {
+        await deleteMessage(messageId);
+        toast.success('已删除', '消息已删除');
+      } catch (error) {
+        console.error('Failed to delete message:', error);
+        toast.error('删除失败', '无法删除消息');
+      }
     },
-    [messages, setMessages, toast]
+    [deleteMessage, toast]
   );
 
   const handleReply = useCallback(
@@ -434,23 +523,32 @@ export default function EnhancedChatPage() {
 
   const handleQuestionClick = useCallback(
     (question: string) => {
-      handleSendMessage(question);
+      handleSendMessage(question).catch((error) => {
+        console.error('Failed to send question:', error);
+        toast.error('发送失败', '无法发送问题，请重试');
+      });
     },
-    [handleSendMessage]
+    [handleSendMessage, toast]
   );
 
   const handleEntityClick = useCallback(
     (entity: Entity) => {
-      handleSendMessage(`请详细介绍${entity.name}`);
+      handleSendMessage(`请详细介绍${entity.name}`).catch((error) => {
+        console.error('Failed to send entity question:', error);
+        toast.error('发送失败', '无法发送问题，请重试');
+      });
     },
-    [handleSendMessage]
+    [handleSendMessage, toast]
   );
 
   const handleKeywordClick = useCallback(
     (keyword: string) => {
-      handleSendMessage(`${keyword}是什么？`);
+      handleSendMessage(`${keyword}是什么？`).catch((error) => {
+        console.error('Failed to send keyword question:', error);
+        toast.error('发送失败', '无法发送问题，请重试');
+      });
     },
-    [handleSendMessage]
+    [handleSendMessage, toast]
   );
 
   const handleNewChat = useCallback(async () => {
@@ -526,13 +624,24 @@ export default function EnhancedChatPage() {
     [messages, currentSession, toast]
   );
 
-  const handleBatchDelete = useCallback(() => {
-    const newMessages = messages.filter((m) => !selectedMessages.has(m.id));
-    setMessages(newMessages);
-    setSelectedMessages(new Set());
-    setIsSelectMode(false);
-    toast.success('批量删除', `已删除${selectedMessages.size}条消息`);
-  }, [messages, selectedMessages, setMessages, toast]);
+  const handleBatchDelete = useCallback(async () => {
+    try {
+      // 在异步操作前保存删除数量
+      const deleteCount = selectedMessages.size;
+
+      // 逐个删除消息，确保持久化
+      for (const messageId of selectedMessages) {
+        await deleteMessage(messageId);
+      }
+
+      setSelectedMessages(new Set());
+      setIsSelectMode(false);
+      toast.success('批量删除', `已删除${deleteCount}条消息`);
+    } catch (error) {
+      console.error('Failed to batch delete messages:', error);
+      toast.error('删除失败', '无法批量删除消息');
+    }
+  }, [deleteMessage, selectedMessages, toast]);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
