@@ -172,7 +172,7 @@ export default function KnowledgePage() {
 
   return (
     <div
-      className="h-screen relative overflow-hidden flex flex-col"
+      className="h-[calc(100vh-4rem)] min-h-0 relative overflow-hidden flex flex-col"
       style={{ background: 'var(--gradient-background)' }}
     >
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -201,7 +201,7 @@ export default function KnowledgePage() {
           animate={{ opacity: 1, y: 0 }}
           className="mb-6"
         >
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <motion.h1
                 initial={{ opacity: 0, x: -20 }}
@@ -230,10 +230,10 @@ export default function KnowledgePage() {
             <motion.div
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
-              className="flex gap-4"
+              className="flex flex-wrap gap-3"
             >
               <div
-                className="backdrop-blur-xl rounded-2xl p-4 min-w-[140px]"
+                className="backdrop-blur-xl rounded-2xl p-4 min-w-[120px] flex-1 sm:flex-none"
                 style={{
                   background: 'var(--gradient-card)',
                   border: '1px solid var(--color-border)',
@@ -252,7 +252,7 @@ export default function KnowledgePage() {
               </div>
 
               <div
-                className="backdrop-blur-xl rounded-2xl p-4 min-w-[140px]"
+                className="backdrop-blur-xl rounded-2xl p-4 min-w-[120px] flex-1 sm:flex-none"
                 style={{
                   background: 'var(--gradient-card)',
                   border: '1px solid var(--color-border)',
@@ -271,7 +271,7 @@ export default function KnowledgePage() {
               </div>
 
               <div
-                className="backdrop-blur-xl rounded-2xl p-4 min-w-[140px]"
+                className="backdrop-blur-xl rounded-2xl p-4 min-w-[120px] flex-1 sm:flex-none"
                 style={{
                   background: 'var(--gradient-card)',
                   border: '1px solid var(--color-border)',
@@ -308,7 +308,7 @@ export default function KnowledgePage() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
-          className="flex gap-4 mb-4"
+          className="flex flex-col gap-3 mb-4 xl:flex-row"
         >
           <div
             className="flex-1 backdrop-blur-xl rounded-2xl p-4"

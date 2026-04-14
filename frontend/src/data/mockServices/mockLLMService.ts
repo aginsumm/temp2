@@ -125,7 +125,7 @@ function generateResponse(message: string): string {
       const template = RESPONSE_TEMPLATES.inheritor[0];
       return template
         .replace('{name}', entity.name)
-        .replace('{craft}', entity.craft || '')
+        .replace('{craft}', 'craft' in entity ? String((entity as { craft?: string }).craft || '') : '')
         .replace('{region}', entity.region || '');
     } else {
       const template = RESPONSE_TEMPLATES.technique[Math.floor(Math.random() * RESPONSE_TEMPLATES.technique.length)];

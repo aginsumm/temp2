@@ -6,10 +6,13 @@ import NetworkStatusManager from "../components/common/NetworkStatusManager";
 export default function MainLayout() {
   return (
     <NetworkNotificationProvider>
-      <div className="min-h-screen transition-colors duration-300" style={{ background: 'var(--gradient-background)' }}>
+      <div
+        className="min-h-screen flex flex-col transition-colors duration-300"
+        style={{ background: 'var(--gradient-background)' }}
+      >
         <NetworkStatusManager mode="compact" position="top-bar" showQueue />
         <Header />
-        <main className="pt-16 min-h-screen">
+        <main className="pt-16 flex-1 overflow-x-hidden">
           <Outlet />
         </main>
       </div>

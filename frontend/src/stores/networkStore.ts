@@ -18,7 +18,7 @@ interface NetworkState {
   setManualReconnect: (value: boolean) => void;
 }
 
-export const useNetworkStore = create<NetworkState>((set, get) => ({
+export const useNetworkStore = create<NetworkState>((set) => ({
   status: 'online',
   latency: null,
   lastConnected: null,

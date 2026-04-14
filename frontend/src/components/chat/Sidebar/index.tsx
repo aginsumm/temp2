@@ -4,7 +4,6 @@ import {
   MessageSquare,
   Plus,
   Star,
-  Zap,
   ChevronLeft,
   ChevronRight,
   Search,
@@ -14,38 +13,22 @@ import {
   Edit2,
   FolderOpen,
   GripVertical,
-  Download,
-  History,
-  Settings,
   Clock,
   Archive,
-  Filter,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { useChatStore } from '../../../stores/chatStore';
 import { useUIStore, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../../../stores/uiStore';
 import { useResizablePanel } from '../../../hooks/useResizablePanel';
 import { chatDataService } from '../../../services/chat';
 import type { Session } from '../../../types/chat';
 
-interface QuickAction {
-  id: string;
-  label: string;
-  icon: React.ElementType;
-  description: string;
-  action: () => void;
-}
-
 interface SidebarProps {
   onNewChat: () => void;
   onSwitchSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onPinSession: (sessionId: string) => void;
-  onExportSession?: (format: 'json' | 'txt' | 'md') => void;
-  onClearHistory?: () => void;
-  onSearchHistory?: (query: string) => void;
-  onArchiveSession?: (sessionId: string) => void;
   onSelectFavorite?: (question: string) => void;
-  onBatchDelete?: (sessionIds: string[]) => void;
 }
 
 export default function Sidebar({
@@ -53,22 +36,10 @@ export default function Sidebar({
   onSwitchSession,
   onDeleteSession,
   onPinSession,
-  onExportSession,
-  onClearHistory,
-  onSearchHistory,
-  onArchiveSession,
   onSelectFavorite,
-  onBatchDelete,
 }: SidebarProps) {
   const { sidebarCollapsed, toggleSidebar, sidebarWidth, setSidebarWidth } = useUIStore();
-  const {
-    sessions,
-    currentSessionId,
-    pinSession,
-    updateSessionTitle,
-    archiveSession,
-    deleteSessions,
-  } = useChatStore();
+  const { sessions, currentSessionId, pinSession, updateSessionTitle } = useChatStore();
   const [activeTab, setActiveTab] = useState('sessions');
   const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState<{
@@ -81,10 +52,32 @@ export default function Sidebar({
   const [favoriteQuestions, setFavoriteQuestions] = useState<
     { id: string; question: string; category: string; timestamp: string }[]
   >([]);
-  const [recentSearches, setRecentSearches] = useState<string[]>([]);
-  const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set());
   const [isSelectionMode, setIsSelectionMode] = useState(false);
-  const [filterType, setFilterType] = useState<'all' | 'pinned' | 'archived'>('all');
+  const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set());
+  const [filterType, setFilterType] = useState<'all' | 'pinned'>('all');
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('chat_recent_searches');
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const addRecentSearch = (query: string) => {
+    const q = query.trim();
+    if (!q) return;
+
+    setRecentSearches((prev) => {
+      const next = [q, ...prev.filter((x) => x !== q)].slice(0, 20);
+      try {
+        localStorage.setItem('chat_recent_searches', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   const { isResizing, handleMouseDown } = useResizablePanel({
     initialWidth: sidebarWidth,
@@ -108,11 +101,6 @@ export default function Sidebar({
       }
     };
 
-    const storedSearches = localStorage.getItem('recentSearches');
-    if (storedSearches) {
-      setRecentSearches(JSON.parse(storedSearches));
-    }
-
     loadFavoriteQuestions();
 
     const handleFavoriteChange = () => {
@@ -131,97 +119,34 @@ export default function Sidebar({
     return () => document.removeEventListener('click', handleClickOutside);
   }, []);
 
-  const quickActions: QuickAction[] = [
-    {
-      id: 'clear',
-      label: '清空对话',
-      icon: Trash2,
-      description: '清除当前会话的所有消息',
-      action: () => {
-        onClearHistory?.();
-      },
-    },
-    {
-      id: 'export',
-      label: '导出对话',
-      icon: Download,
-      description: '将当前会话导出为文件',
-      action: () => {
-        onExportSession?.('md');
-      },
-    },
-    {
-      id: 'search',
-      label: '搜索历史',
-      icon: History,
-      description: '在历史消息中搜索',
-      action: () => {
-        onSearchHistory?.(searchQuery);
-      },
-    },
-    {
-      id: 'archive',
-      label: '归档会话',
-      icon: Archive,
-      description: '将当前会话归档',
-      action: async () => {
-        if (currentSessionId) {
-          const session = sessions.find((s) => s.id === currentSessionId);
-          const newArchivedStatus = !session?.is_archived;
-          archiveSession(currentSessionId);
-          try {
-            await chatDataService.updateSession(currentSessionId, {
-              is_archived: newArchivedStatus,
-            });
-          } catch (error) {
-            console.warn('Failed to sync archive status to server');
-          }
-          onArchiveSession?.(currentSessionId);
-        }
-      },
-    },
-    {
-      id: 'filter',
-      label: '筛选会话',
-      icon: Filter,
-      description: '按条件筛选会话列表',
-      action: () => {
-        setFilterType((prev) => {
-          if (prev === 'all') return 'pinned';
-          if (prev === 'pinned') return 'archived';
-          return 'all';
-        });
-      },
-    },
-    {
-      id: 'batch',
-      label: '批量管理',
-      icon: Settings,
-      description: '批量选择和操作会话',
-      action: () => {
-        setIsSelectionMode((prev) => !prev);
-        setSelectedSessions(new Set());
-      },
-    },
-  ];
-
   const filteredSessions = sessions.filter((s) => {
-    const matchesSearch = s.title.toLowerCase().includes(searchQuery.toLowerCase());
-    if (filterType === 'pinned') return matchesSearch && s.is_pinned;
-    if (filterType === 'archived') return matchesSearch && s.is_archived;
-    return matchesSearch && !s.is_archived;
+    return s.title.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
-  const pinnedSessions = filteredSessions.filter((s) => s.is_pinned);
-  const regularSessions = filteredSessions.filter((s) => !s.is_pinned);
+  const filteredByType =
+    filterType === 'pinned' ? filteredSessions.filter((s) => s.is_pinned) : filteredSessions;
+  const pinnedSessions = filteredByType.filter((s) => s.is_pinned);
+  const regularSessions = filteredByType.filter((s) => !s.is_pinned);
 
   const handleNewSession = () => {
     onNewChat?.();
   };
 
-  const handleSwitchSession = (sessionId: string) => {
-    onSwitchSession?.(sessionId);
-  };
+  const quickActions: {
+    id: string;
+    label: string;
+    description: string;
+    action: () => void;
+    icon: LucideIcon;
+  }[] = [
+    {
+      id: 'new-chat',
+      label: '新建对话',
+      description: '开始一个新的会话',
+      action: handleNewSession,
+      icon: Plus,
+    },
+  ];
 
   const handleDeleteSession = async (sessionId: string) => {
     try {
@@ -287,67 +212,47 @@ export default function Sidebar({
     setContextMenu({ id: sessionId, x, y });
   };
 
+  const handleFavoriteClick = (question: string) => {
+    onSelectFavorite?.(question);
+  };
+
+  const handleSwitchSession = (sessionId: string) => {
+    onSwitchSession?.(sessionId);
+    setContextMenu(null);
+  };
+
   const handleSelectSession = (sessionId: string) => {
     setSelectedSessions((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(sessionId)) {
-        newSet.delete(sessionId);
-      } else {
-        newSet.add(sessionId);
-      }
-      return newSet;
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
     });
   };
 
   const handleSelectAll = () => {
-    if (selectedSessions.size === filteredSessions.length) {
-      setSelectedSessions(new Set());
-    } else {
-      setSelectedSessions(new Set(filteredSessions.map((s) => s.id)));
-    }
+    setSelectedSessions(new Set(filteredByType.map((s) => s.id)));
+  };
+
+  const handleBatchArchive = async () => {
+    setSelectedSessions(new Set());
+    setIsSelectionMode(false);
   };
 
   const handleBatchDelete = async () => {
     const ids = Array.from(selectedSessions);
-    if (ids.length > 0) {
-      for (const id of ids) {
-        try {
-          await chatDataService.deleteSession(id);
-        } catch (error) {
-          console.warn(`Failed to delete session ${id} from server`);
-        }
-      }
-      deleteSessions(ids);
-      onBatchDelete?.(ids);
-      setSelectedSessions(new Set());
-      setIsSelectionMode(false);
-    }
-  };
+    if (ids.length === 0) return;
 
-  const handleBatchArchive = async () => {
-    const ids = Array.from(selectedSessions);
     for (const id of ids) {
-      const session = sessions.find((s) => s.id === id);
-      const newArchivedStatus = !session?.is_archived;
-      archiveSession(id);
-      try {
-        await chatDataService.updateSession(id, { is_archived: newArchivedStatus });
-      } catch (error) {
-        console.warn('Failed to sync archive status to server');
-      }
-      onArchiveSession?.(id);
+      // eslint-disable-next-line no-await-in-loop
+      await handleDeleteSession(id);
     }
     setSelectedSessions(new Set());
     setIsSelectionMode(false);
   };
 
-  const handleFavoriteClick = (question: string) => {
-    onSelectFavorite?.(question);
-  };
-
   const handleRecentSearchClick = (search: string) => {
     setSearchQuery(search);
-    onSearchHistory?.(search);
   };
 
   const groupSessionsByDate = (sessions: typeof filteredSessions) => {
@@ -415,7 +320,7 @@ export default function Sidebar({
         animate={{ opacity: 1, x: 0 }}
         exit={{ opacity: 0, x: -12 }}
         whileHover={{ x: 3 }}
-        className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-150 group relative`}
+        className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-150 group relative"
         style={{
           background:
             currentSessionId === session.id
@@ -432,11 +337,8 @@ export default function Sidebar({
           boxShadow: currentSessionId === session.id ? 'var(--color-shadow)' : 'none',
         }}
         onClick={() => {
-          if (isSelectionMode) {
-            handleSelectSession(session.id);
-          } else if (!isEditing) {
-            handleSwitchSession(session.id);
-          }
+          if (isSelectionMode) handleSelectSession(session.id);
+          else if (!isEditing) handleSwitchSession(session.id);
         }}
         onContextMenu={(e) => !isSelectionMode && handleContextMenu(e, session.id)}
       >
@@ -514,12 +416,12 @@ export default function Sidebar({
             </>
           )}
         </div>
-        {session.is_pinned && !isEditing && !isSelectionMode && (
+        {session.is_pinned && !isEditing && (
           <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="flex-shrink-0">
             <Pin size={11} style={{ color: 'var(--color-secondary)' }} />
           </motion.div>
         )}
-        {!isEditing && !isSelectionMode && (
+        {!isEditing && (
           <motion.button
             initial={{ opacity: 0 }}
             whileHover={{ opacity: 1 }}
@@ -543,7 +445,7 @@ export default function Sidebar({
         initial={false}
         animate={{ width: sidebarCollapsed ? 56 : sidebarWidth }}
         transition={isResizing ? { duration: 0 } : { duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-        className="h-screen flex flex-col overflow-hidden relative transition-colors duration-300"
+        className="h-full min-h-0 flex flex-col overflow-hidden relative transition-colors duration-300"
         style={{
           background: 'var(--color-surface)',
           borderRight: '1px solid var(--color-border-light)',
@@ -570,7 +472,6 @@ export default function Sidebar({
               {[
                 { icon: MessageSquare, label: '会话历史', tab: 'sessions' },
                 { icon: Star, label: '收藏问题', tab: 'favorites' },
-                { icon: Zap, label: '快捷操作', tab: 'actions' },
               ].map((item) => (
                 <motion.button
                   key={item.tab}
@@ -655,6 +556,9 @@ export default function Sidebar({
                   placeholder="搜索会话..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') addRecentSearch(searchQuery);
+                  }}
                   className="w-full pl-8 pr-3 py-2 text-xs rounded-lg transition-all"
                   style={{
                     background: 'var(--color-background-secondary)',
@@ -672,7 +576,6 @@ export default function Sidebar({
               {[
                 { id: 'sessions', label: '会话', icon: MessageSquare },
                 { id: 'favorites', label: '收藏', icon: Star },
-                { id: 'actions', label: '快捷', icon: Zap },
               ].map((tab) => (
                 <button
                   key={tab.id}
