@@ -1,4 +1,4 @@
-import { AxiosError, AxiosResponse } from 'axios';
+import { AxiosError } from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 
 export enum ErrorSeverity {
@@ -98,7 +98,7 @@ class ErrorService {
     return ErrorSeverity.MEDIUM;
   }
 
-  generateUserMessage(error: unknown, category: ErrorCategory): string {
+  generateUserMessage(error: unknown, _category: ErrorCategory): string {
     if (error instanceof AxiosError) {
       const status = error.response?.status;
       const data = error.response?.data as { detail?: string; message?: string };

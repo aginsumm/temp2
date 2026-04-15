@@ -86,7 +86,7 @@ export default function UserCenter() {
   ];
 
   return (
-    <div className={`flex min-h-[calc(100vh-64px)] ${colors.baseBg} font-sans selection:bg-[#b89259]/20 selection:${colors.accentGoldText}`}>
+    <div className={`flex flex-col md:flex-row min-h-[calc(100vh-64px)] ${colors.baseBg} font-sans selection:bg-[#b89259]/20 selection:${colors.accentGoldText}`}>
       
       {/* 隐藏的文件选择器 */}
       <input 
@@ -101,9 +101,9 @@ export default function UserCenter() {
       <motion.div 
         initial={{ x: -20, opacity: 0 }}
         animate={{ x: 0, opacity: 1 }}
-        className={`w-64 ${colors.cardBg} border-r ${colors.border} flex flex-col pt-10 pb-6 px-4 shadow-[4px_0_24px_rgba(58,55,50,0.02)] z-10`}
+        className={`w-full md:w-64 ${colors.cardBg} border-b md:border-b-0 md:border-r ${colors.border} flex flex-col md:pt-10 pt-4 pb-4 md:pb-6 px-3 md:px-4 shadow-[4px_0_24px_rgba(58,55,50,0.02)] z-10`}
       >
-        <div className="flex flex-col gap-2">
+        <div className="flex md:flex-col gap-2 overflow-x-auto pb-1 md:pb-0">
           {navItems.map((item) => {
             const isActive = activeTab === item.id;
             const Icon = item.icon;
@@ -129,7 +129,7 @@ export default function UserCenter() {
             );
           })}
         </div>
-        <div className="mt-auto">
+        <div className="mt-3 md:mt-auto">
           <button className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl ${colors.textSub} hover:bg-[#f8f6f1] transition-all duration-300`}>
             <Settings size={20} />
             <span className="tracking-wider text-sm">账户设置</span>
@@ -138,7 +138,7 @@ export default function UserCenter() {
       </motion.div>
 
       {/* --- 右侧主内容区 --- */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <AnimatePresence mode="wait">
           {activeTab === 'profile' ? (
             <motion.div
@@ -147,7 +147,7 @@ export default function UserCenter() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
               transition={{ duration: 0.4 }}
-              className="max-w-6xl mx-auto p-10 md:p-16"
+              className="max-w-6xl mx-auto p-5 md:p-16"
             >
               <div className="flex flex-col md:flex-row items-center md:items-start gap-10 mb-16">
                 
@@ -234,7 +234,7 @@ export default function UserCenter() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
               transition={{ duration: 0.4 }}
-              className="max-w-6xl mx-auto p-10 md:p-16 flex flex-col items-center justify-center h-full min-h-[60vh]"
+              className="max-w-6xl mx-auto p-5 md:p-16 flex flex-col items-center justify-center h-full min-h-[60vh]"
             >
               <div className={`w-24 h-24 rounded-full ${colors.cardBg} border ${colors.border} flex items-center justify-center mb-6 shadow-sm`}>
                 <History size={40} className={colors.accentGoldText} />

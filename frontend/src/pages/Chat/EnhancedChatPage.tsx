@@ -12,7 +12,6 @@ import RightPanel from '../../components/chat/RightPanel';
 import AdvancedInputArea from '../../components/chat/AdvancedInputArea';
 import EnhancedMessageBubble from '../../components/chat/EnhancedMessageBubble';
 import ChatToolbar from '../../components/chat/ChatToolbar';
-import { QuickActionsBar } from '../../components/chat/ChatToolbar';
 import CommandPalette from '../../components/chat/CommandPalette';
 import WelcomeScreen from '../../components/chat/WelcomeScreen';
 import MessageSearch from '../../components/chat/MessageSearch';
@@ -27,12 +26,9 @@ export default function EnhancedChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<(() => void) | null>(null);
-  const [currentEntities, setCurrentEntities] = useState<Entity[]>([]);
+  const [, setCurrentEntities] = useState<Entity[]>([]);
   const [currentKeywords, setCurrentKeywords] = useState<string[]>([]);
-  const [currentSources, setCurrentSources] = useState<Source[]>([]);
-  const [recommendedQuestions] = useState<{ id: string; question: string; category?: string }[]>(
-    []
-  );
+  const [, setCurrentSources] = useState<Source[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
   const [newMessageIds, setNewMessageIds] = useState(new Set<string>());
   const [quotedMessage, setQuotedMessage] = useState<Message | null>(null);
@@ -40,8 +36,7 @@ export default function EnhancedChatPage() {
   const [showMessageSearch, setShowMessageSearch] = useState(false);
   const [showSessionSettings, setShowSessionSettings] = useState(false);
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
-  const [selectedMessages, setSelectedMessages] = useState<Set<string>>(new Set());
-  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [, setSelectedMessages] = useState<Set<string>>(new Set());
   const [autoScroll, setAutoScroll] = useState(true);
   const [streamingContent, setStreamingContent] = useState<string>('');
   const toast = useToast();
@@ -105,7 +100,6 @@ export default function EnhancedChatPage() {
         setShowSessionSettings(false);
         setShowKeyboardShortcuts(false);
         setQuotedMessage(null);
-        setIsSelectMode(false);
         setSelectedMessages(new Set());
       }
     };
@@ -531,16 +525,6 @@ export default function EnhancedChatPage() {
     [handleSendMessage, toast]
   );
 
-  const handleEntityClick = useCallback(
-    (entity: Entity) => {
-      handleSendMessage(`请详细介绍${entity.name}`).catch((error) => {
-        console.error('Failed to send entity question:', error);
-        toast.error('发送失败', '无法发送问题，请重试');
-      });
-    },
-    [handleSendMessage, toast]
-  );
-
   const handleKeywordClick = useCallback(
     (keyword: string) => {
       handleSendMessage(`${keyword}是什么？`).catch((error) => {
@@ -624,25 +608,6 @@ export default function EnhancedChatPage() {
     [messages, currentSession, toast]
   );
 
-  const handleBatchDelete = useCallback(async () => {
-    try {
-      // 在异步操作前保存删除数量
-      const deleteCount = selectedMessages.size;
-
-      // 逐个删除消息，确保持久化
-      for (const messageId of selectedMessages) {
-        await deleteMessage(messageId);
-      }
-
-      setSelectedMessages(new Set());
-      setIsSelectMode(false);
-      toast.success('批量删除', `已删除${deleteCount}条消息`);
-    } catch (error) {
-      console.error('Failed to batch delete messages:', error);
-      toast.error('删除失败', '无法批量删除消息');
-    }
-  }, [deleteMessage, selectedMessages, toast]);
-
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     setAutoScroll(true);
@@ -650,7 +615,7 @@ export default function EnhancedChatPage() {
 
   if (!isInitialized) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
         <div
           className="animate-spin rounded-full h-12 w-12 border-b-2"
           style={{ borderColor: 'var(--color-primary)' }}
@@ -661,7 +626,7 @@ export default function EnhancedChatPage() {
 
   return (
     <div
-      className="flex h-screen overflow-hidden"
+      className="flex h-[calc(100vh-4rem)] min-h-0 overflow-hidden"
       style={{ background: 'var(--color-background)' }}
     >
       <Sidebar
@@ -671,7 +636,7 @@ export default function EnhancedChatPage() {
         onPinSession={(id) => pinSession(id)}
       />
 
-      <div className="flex-1 flex flex-col min-w-0 relative">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 relative">
         <ChatToolbar
           sessionId={currentSessionId}
           sessionTitle={currentSession?.title}
@@ -777,15 +742,7 @@ export default function EnhancedChatPage() {
         )}
       </div>
 
-      <RightPanel
-        entities={currentEntities}
-        keywords={currentKeywords}
-        recommendedQuestions={recommendedQuestions}
-        sources={currentSources}
-        onQuestionClick={handleQuestionClick}
-        onEntityClick={handleEntityClick}
-        onKeywordClick={handleKeywordClick}
-      />
+      <RightPanel keywords={currentKeywords} onKeywordClick={handleKeywordClick} />
 
       <AnimatePresence>
         {showCommandPalette && (
@@ -854,21 +811,6 @@ export default function EnhancedChatPage() {
           />
         )}
       </AnimatePresence>
-
-      {isSelectMode && selectedMessages.size > 0 && (
-        <QuickActionsBar
-          selectedCount={selectedMessages.size}
-          onClear={() => {
-            setIsSelectMode(false);
-            setSelectedMessages(new Set());
-          }}
-          onSelectAll={() => {
-            const allIds = new Set(messages.map((m) => m.id));
-            setSelectedMessages(allIds);
-          }}
-          onBatchDelete={handleBatchDelete}
-        />
-      )}
     </div>
   );
 }

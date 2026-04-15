@@ -202,7 +202,7 @@ class ConnectionManager {
     method: QueuedRequest['method'],
     url: string,
     data?: unknown,
-    config?: unknown,
+    config?: RequestConfig,
     priority: QueuedRequest['priority'] = 'normal'
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {

@@ -133,7 +133,7 @@ export default function Homepage() {
   const particleCount = visual.particles.enabled ? visual.particles.count : 12;
 
   return (
-    <div className="min-h-[calc(100vh-64px)] overflow-hidden">
+    <div className="min-h-[calc(100vh-64px)] overflow-x-hidden">
       {/* Hero Section - 非遗建筑背景 */}
       <section className="relative min-h-[95vh] flex items-center justify-center py-20 px-4 overflow-hidden hero-heritage-bg">
         {/* 古建筑轮廓剪影 */}

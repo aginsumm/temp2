@@ -36,7 +36,6 @@ class NetworkStatusService {
   private readonly BASE_RECONNECT_DELAY = 1000;
   private readonly MAX_RECONNECT_DELAY = 30000;
   private readonly LATENCY_HISTORY_SIZE = 20;
-  private readonly API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
   private readonly HEALTH_ENDPOINT = '/health';
   private isReconnecting = false;
   private reconnectTimeout: NodeJS.Timeout | null = null;

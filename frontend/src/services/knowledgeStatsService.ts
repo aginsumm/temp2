@@ -30,8 +30,9 @@ interface StatsUpdateEvent {
     | 'entity_updated'
     | 'entity_deleted'
     | 'relationship_created'
-    | 'relationship_deleted';
-  data: EntityEvent | RelationshipEvent;
+    | 'relationship_deleted'
+    | 'stats_updated';
+  data: EntityEvent | RelationshipEvent | KnowledgeStats;
 }
 
 type StatsListener = (event: StatsUpdateEvent) => void;
@@ -165,7 +166,7 @@ class KnowledgeStatsService {
         const newStats = await this.getStats(true);
         if (this.stats && JSON.stringify(newStats) !== JSON.stringify(this.stats)) {
           this.notifyListeners({
-            type: 'entity_updated',
+            type: 'stats_updated',
             data: newStats,
           });
         }

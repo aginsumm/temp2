@@ -4,11 +4,9 @@ import { motion } from 'framer-motion';
 import {
   MessageSquare,
   Network,
-  Layers,
   User,
   Menu,
   X,
-  Settings,
   LogOut,
   ChevronDown,
 } from 'lucide-react';
@@ -17,12 +15,12 @@ import { useUIStore } from '../../../stores/uiStore';
 import NetworkStatusManager from '../../common/NetworkStatusManager';
 import ThemeToggle from '../../common/ThemeToggle';
 import logoSvg from '../../../assets/icon/logo.svg';
+import { useAuthStore } from '../../../stores/authStore';
 
 const navItems = [
   { path: '/', label: '首页', icon: null },
   { path: '/chat', label: '智能问答', icon: MessageSquare },
   { path: '/knowledge', label: '知识图谱', icon: Network },
-  { path: '/extract', label: '元素提取', icon: Layers },
 ];
 
 export default function Header() {
@@ -46,6 +44,15 @@ export default function Header() {
   console.log("当前 Header 里的 user 数据:", user);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const userInitial = useMemo(() => {
+    const name = user?.username?.trim();
+    return name ? name[0].toUpperCase() : 'U';
+  }, [user?.username]);
+
+  useEffect(() => {
+    setShowUserMenu(false);
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
 
   const isActive = (path) => {
     if (path === '/') return location.pathname === '/';
@@ -108,7 +115,23 @@ export default function Header() {
         </nav>
 
         <div className="flex items-center gap-2">
-          <NetworkStatusManager mode="compact" showLatency showQueue={false} />
+          <button
+            type="button"
+            className="lg:hidden inline-flex items-center justify-center w-10 h-10 rounded-lg transition-colors"
+            style={{ color: 'var(--color-text-secondary)' }}
+            aria-label={mobileMenuOpen ? '关闭菜单' : '打开菜单'}
+            aria-expanded={mobileMenuOpen}
+            onClick={() => {
+              setMobileMenuOpen((v) => !v);
+              setShowUserMenu(false);
+            }}
+          >
+            {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
+
+          <div className="hidden md:block">
+            <NetworkStatusManager mode="compact" showLatency showQueue={false} />
+          </div>
 
           <ThemeToggle variant="dropdown" size="sm" />
 
@@ -150,7 +173,7 @@ export default function Header() {
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
-                className="absolute right-0 top-full mt-2 w-48 rounded-xl shadow-lg py-2 z-50"
+                className="absolute right-0 top-full mt-2 w-48 rounded-xl shadow-lg py-2 z-50 max-h-[70vh] overflow-auto"
                 style={{
                   background: 'var(--color-surface)',
                   border: '1px solid var(--color-border-light)',
@@ -166,12 +189,12 @@ export default function Header() {
                   个人中心
                 </Link>
                 <Link
-                  to="/settings"
+                  to="/user"
                   className="flex items-center gap-3 px-4 py-2 text-sm transition-colors"
                   style={{ color: 'var(--color-text-secondary)' }}
                   onClick={() => setShowUserMenu(false)}
                 >
-                  <Settings size={16} />
+                  <User size={16} />
                   设置
                 </Link>
                 <hr style={{ borderColor: 'var(--color-border-light)', margin: '0.5rem 0' }} />
@@ -194,10 +217,12 @@ export default function Header() {
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
           exit={{ opacity: 0, height: 0 }}
-          className="lg:hidden"
+          className="lg:hidden absolute left-0 right-0 top-16"
           style={{
             borderTop: '1px solid var(--color-border-light)',
             background: 'var(--color-surface)',
+            maxHeight: 'calc(100vh - 4rem)',
+            overflowY: 'auto',
           }}
         >
           <nav className="p-4 space-y-1">

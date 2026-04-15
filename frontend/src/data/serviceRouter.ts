@@ -17,7 +17,7 @@
  */
 
 import { apiAdapterManager } from './apiAdapter';
-import { FEATURE_CONFIG, requiresBackend, supportsLocal, type FeatureMode } from '../config/featureConfig';
+import { FEATURE_CONFIG, type FeatureMode } from '../config/featureConfig';
 import { mockLLMService } from './mockServices/mockLLMService';
 import { mockChatService } from './mockServices/mockChatService';
 import { mockKnowledgeService } from './mockServices/mockKnowledgeService';
@@ -127,12 +127,9 @@ class ServiceRouter {
   getChatService() {
     if (this.shouldUseBackend('chatMessage')) {
       return {
-        type: 'remote' as const,
-        sendMessage: async (sessionId: string, content: string) => {
-          // 【后端扩展点】调用后端 API
-          // return await apiClient.post('/api/v1/chat/message', { sessionId, content });
-          throw new Error('Backend chat service not implemented');
-        },
+        type: 'degraded' as const,
+        service: mockChatService,
+        repository: chatRepository,
       };
     }
     return {
@@ -159,18 +156,8 @@ class ServiceRouter {
   getLLMService() {
     if (this.shouldUseBackend('llmChat')) {
       return {
-        type: 'remote' as const,
-        chat: async (request: Parameters<typeof mockLLMService.chat>[0]) => {
-          // 【后端扩展点】调用后端 LLM API
-          // return await apiClient.post('/api/v1/llm/chat', request);
-          throw new Error('Backend LLM service not implemented');
-        },
-        chatStream: async function* (request: Parameters<typeof mockLLMService.chat>[0]) {
-          // 【后端扩展点】调用后端流式 API
-          // const response = await fetch('/api/v1/llm/chat/stream', { ... });
-          // for await (const chunk of response.body) { yield chunk; }
-          yield* mockLLMService.chatStream(request);
-        },
+        type: 'mock' as const,
+        service: mockLLMService,
       };
     }
     return {
@@ -207,7 +194,8 @@ class ServiceRouter {
   ): Promise<T> {
     const config = FEATURE_CONFIG[featureName];
     if (!config) {
-      throw new Error(`Unknown feature: ${featureName}`);
+      console.warn(`Unknown feature: ${featureName}, using local fallback`);
+      return localFn();
     }
 
     if (config.mode === 'local-only') {
@@ -228,7 +216,8 @@ class ServiceRouter {
       } else if (mockFn) {
         return mockFn();
       }
-      throw new Error(`Backend required for ${featureName} but not available`);
+      console.warn(`Backend required for ${featureName} but unavailable, using local fallback`);
+      return localFn();
     }
 
     if (config.mode === 'local-first') {
