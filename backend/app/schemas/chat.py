@@ -14,6 +14,19 @@ class EntityType(str, Enum):
     material = "material"
 
 
+class RelationType(str, Enum):
+    inherits = "inherits"
+    origin = "origin"
+    creates = "creates"
+    flourished_in = "flourished_in"
+    located_in = "located_in"
+    uses_material = "uses_material"
+    has_pattern = "has_pattern"
+    related_to = "related_to"
+    influenced_by = "influenced_by"
+    contains = "contains"
+
+
 class MessageRole(str, Enum):
     user = "user"
     assistant = "assistant"
@@ -43,6 +56,68 @@ class EntityBase(BaseModel):
 class Entity(EntityBase):
     id: str
     properties: Optional[dict] = None
+    relevance: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    
+    class Config:
+        from_attributes = True
+
+
+class RelationBase(BaseModel):
+    source: str
+    target: str
+    type: RelationType
+
+
+class Relation(RelationBase):
+    id: str
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    evidence: Optional[str] = None
+    bidirectional: bool = False
+    
+    class Config:
+        from_attributes = True
+
+
+class GraphNode(BaseModel):
+    id: str
+    name: str
+    category: str
+    value: float = 0.5
+    symbolSize: float = 30
+    x: Optional[float] = None
+    y: Optional[float] = None
+    description: Optional[str] = None
+    metadata: Optional[dict] = None
+    itemStyle: Optional[dict] = None
+    
+    class Config:
+        from_attributes = True
+
+
+class GraphEdge(BaseModel):
+    id: Optional[str] = None
+    source: str
+    target: str
+    relationType: Optional[str] = None
+    value: float = 0.5
+    lineStyle: Optional[dict] = None
+    
+    class Config:
+        from_attributes = True
+
+
+class GraphCategory(BaseModel):
+    name: str
+    color: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+
+class GraphData(BaseModel):
+    nodes: list[GraphNode] = []
+    edges: list[GraphEdge] = []
+    categories: Optional[list[GraphCategory]] = None
     
     class Config:
         from_attributes = True
@@ -60,6 +135,7 @@ class Message(MessageBase):
     sources: Optional[list[Source]] = None
     entities: Optional[list[Entity]] = None
     keywords: Optional[list[str]] = None
+    relations: Optional[list[Relation]] = None
     feedback: Optional[str] = None
     is_favorite: bool = False
     
@@ -78,6 +154,8 @@ class Session(SessionBase):
     updated_at: datetime
     message_count: int = 0
     is_pinned: bool = False
+    is_archived: bool = False
+    tags: list[str] = []
     
     class Config:
         from_attributes = True
@@ -105,6 +183,7 @@ class ChatMessageResponse(BaseModel):
     sources: Optional[list[Source]] = None
     entities: Optional[list[Entity]] = None
     keywords: Optional[list[str]] = None
+    relations: Optional[list[Relation]] = None
     created_at: str
 
 
@@ -115,6 +194,8 @@ class SessionCreate(BaseModel):
 class SessionUpdate(BaseModel):
     title: Optional[str] = None
     is_pinned: Optional[bool] = None
+    is_archived: Optional[bool] = None
+    tags: Optional[list[str]] = None
 
 
 class SessionListResponse(BaseModel):

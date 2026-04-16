@@ -1,6 +1,5 @@
 import { networkStatusService, type NetworkStatus } from './networkStatus';
 import { chatRepository } from '../data/repositories/chatRepository';
-import { mockChatService } from '../data/mockServices/mockChatService';
 import { dataInitializer } from '../data/dataInitializer';
 import type { Session, Message } from '../types/chat';
 
@@ -51,6 +50,8 @@ interface UnifiedChatService {
 }
 
 const STREAM_TIMEOUT = 60000;
+const MAX_RETRY_COUNT = 3;
+const RETRY_DELAY_BASE = 1000;
 
 class ChatDataService implements UnifiedChatService {
   private mode: Mode = 'offline';
@@ -90,6 +91,30 @@ class ChatDataService implements UnifiedChatService {
     }
   }
 
+  private async withRetry<T>(
+    operation: () => Promise<T>,
+    operationName: string,
+    maxRetries: number = MAX_RETRY_COUNT
+  ): Promise<T> {
+    let lastError: Error | null = null;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        console.warn(`${operationName} attempt ${attempt + 1} failed:`, lastError.message);
+        
+        if (attempt < maxRetries - 1) {
+          const delay = RETRY_DELAY_BASE * Math.pow(2, attempt);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+    
+    throw lastError || new Error(`${operationName} failed after ${maxRetries} retries`);
+  }
+
   getMode(): Mode {
     return this.mode;
   }
@@ -100,18 +125,27 @@ class ChatDataService implements UnifiedChatService {
 
   async getSessions(): Promise<Session[]> {
     await this.ensureInitialized();
-    return chatRepository.getAllSessions();
+    return this.withRetry(
+      () => chatRepository.getAllSessions(),
+      'getSessions'
+    );
   }
 
   async createSession(title = '新对话'): Promise<Session> {
     await this.ensureInitialized();
     const userId = getCurrentUserId();
-    return mockChatService.createSession(title, userId);
+    return this.withRetry(
+      () => chatRepository.createSession(userId, title),
+      'createSession'
+    );
   }
 
   async deleteSession(sessionId: string): Promise<void> {
     await this.ensureInitialized();
-    return chatRepository.deleteSession(sessionId);
+    return this.withRetry(
+      () => chatRepository.deleteSession(sessionId),
+      'deleteSession'
+    );
   }
 
   async updateSession(sessionId: string, updates: Partial<Session>): Promise<Session> {
@@ -122,12 +156,18 @@ class ChatDataService implements UnifiedChatService {
 
   async getMessages(sessionId: string): Promise<Message[]> {
     await this.ensureInitialized();
-    return chatRepository.getMessagesBySession(sessionId);
+    return this.withRetry(
+      () => chatRepository.getMessagesBySession(sessionId),
+      'getMessages'
+    );
   }
 
   async sendMessage(sessionId: string, content: string): Promise<Message> {
     await this.ensureInitialized();
-    return mockChatService.sendMessage(sessionId, content);
+    return this.withRetry(
+      () => chatRepository.sendMessage(sessionId, content),
+      'sendMessage'
+    );
   }
 
   async sendMessageStream(
@@ -156,12 +196,12 @@ class ChatDataService implements UnifiedChatService {
         streamState.aborted = true;
         cleanup();
         if (onError) {
-          onError(new Error('Stream timeout'));
+          onError(new Error('Stream timeout - 响应超时，请重试'));
         }
       }
     }, STREAM_TIMEOUT);
 
-    const abortFn = await mockChatService.sendMessageStream(
+    const abortFn = await chatRepository.sendMessageStream(
       sessionId,
       content,
       (chunk) => {
@@ -175,6 +215,9 @@ class ChatDataService implements UnifiedChatService {
             clearTimeout(streamState.timeoutId);
           }
           cleanup();
+          chatRepository.addMessage(message).catch(err => {
+            console.error('Failed to save AI message:', err);
+          });
           Promise.resolve(onComplete(message)).catch((err) => {
             console.error('Error in onComplete callback:', err);
           });
@@ -193,7 +236,9 @@ class ChatDataService implements UnifiedChatService {
     return () => {
       streamState.aborted = true;
       cleanup();
-      abortFn();
+      if (typeof abortFn === 'function') {
+        abortFn();
+      }
     };
   }
 
@@ -204,12 +249,12 @@ class ChatDataService implements UnifiedChatService {
 
   async toggleFavorite(messageId: string, currentStatus?: boolean): Promise<boolean> {
     await this.ensureInitialized();
-    return mockChatService.toggleFavorite(messageId, currentStatus);
+    return chatRepository.toggleFavorite(messageId, currentStatus);
   }
 
   async getRecommendedQuestions(sessionId?: string): Promise<{ id: string; question: string }[]> {
     console.debug('getRecommendedQuestions for session:', sessionId);
-    return mockChatService.getRecommendedQuestions();
+    return chatRepository.getRecommendedQuestions();
   }
 
   async getFavoriteQuestions(): Promise<
@@ -256,6 +301,10 @@ class ChatDataService implements UnifiedChatService {
       state.aborted = true;
       this.cleanupStream(id);
     });
+  }
+
+  generateSessionTitle(content: string): string {
+    return chatRepository.generateSessionTitle(content);
   }
 }
 

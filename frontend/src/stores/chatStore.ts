@@ -33,6 +33,8 @@ interface ChatState {
   updateSessionTitle: (id: string, title: string) => Promise<void>;
   pinSession: (id: string) => Promise<void>;
   archiveSession: (id: string) => Promise<void>;
+  addTagToSession: (id: string, tag: string) => Promise<void>;
+  removeTagFromSession: (id: string, tag: string) => Promise<void>;
 
   addMessage: (message: Message) => Promise<void>;
   updateMessage: (id: string, updates: Partial<Message>) => Promise<void>;
@@ -59,7 +61,7 @@ interface ChatState {
   batchDeleteSessions: (ids: string[]) => Promise<void>;
   batchArchiveSessions: (ids: string[], archive: boolean) => Promise<void>;
 
-  addMessageVersion: (messageId: string, content: string) => void;
+  addMessageVersion: (messageId: string, content: string, versionGroupId?: string) => void;
   switchMessageVersion: (messageId: string, versionId: string) => void;
   editAndRegenerate: (messageId: string, newContent: string) => void;
   syncVersionForGroup: (versionGroupId: string, versionIndex: number) => void;
@@ -77,11 +79,31 @@ const pruneMessages = (messages: Message[]): Message[] => {
   return messages.slice(-MAX_MESSAGES_PER_SESSION);
 };
 
-const pruneVersions = (versions: MessageVersion[]): MessageVersion[] => {
+export const pruneVersions = (versions: MessageVersion[]): MessageVersion[] => {
   if (versions.length <= MAX_MESSAGE_VERSIONS) return versions;
-  const currentVersion = versions.find((v) => v.is_current);
-  const otherVersions = versions.filter((v) => !v.is_current).slice(-MAX_MESSAGE_VERSIONS + 1);
-  return currentVersion ? [...otherVersions, currentVersion] : otherVersions;
+
+  // 按创建时间排序，确保保留最早和最晚的版本
+  const sortedVersions = [...versions].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+
+  const currentVersion = sortedVersions.find((v) => v.is_current);
+  // 保留最早的 2 个版本和最新的几个版本，确保当前版本始终存在
+  const earliestVersions = sortedVersions.slice(0, 2);
+  const latestVersions = sortedVersions.slice(-(MAX_MESSAGE_VERSIONS - 2));
+
+  // 合并并去重，确保当前版本在列表中
+  const uniqueVersions = Array.from(
+    new Map([...earliestVersions, ...latestVersions].map((v) => [v.id, v])).values()
+  );
+
+  if (currentVersion && !uniqueVersions.find((v) => v.id === currentVersion.id)) {
+    uniqueVersions.push(currentVersion);
+  }
+
+  return uniqueVersions.sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
 };
 
 const pruneSessions = (sessions: Session[]): Session[] => {
@@ -109,9 +131,9 @@ export const useChatStore = create<ChatState>()(
         try {
           await dataInitializer.initialize();
           const sessions = await chatRepository.getAllSessions();
-          set({ 
+          set({
             sessions: pruneSessions(sessions),
-            isDataLoaded: true 
+            isDataLoaded: true,
           });
         } catch (e) {
           console.error('Failed to initialize data:', e);
@@ -172,7 +194,9 @@ export const useChatStore = create<ChatState>()(
         if (apiAdapterManager.shouldUseRemote()) {
           syncManager
             .addOperation('create_session', newSession as unknown as Record<string, unknown>)
-            .catch(() => {});
+            .catch((err) => {
+              console.error('Failed to sync create_session:', err);
+            });
         }
 
         return newSession;
@@ -201,7 +225,9 @@ export const useChatStore = create<ChatState>()(
         });
 
         if (apiAdapterManager.shouldUseRemote()) {
-          syncManager.addOperation('delete_session', { id }).catch(() => {});
+          syncManager.addOperation('delete_session', { id }).catch((err) => {
+            console.error('Failed to sync delete_session:', err);
+          });
         }
       },
 
@@ -231,7 +257,9 @@ export const useChatStore = create<ChatState>()(
 
         if (apiAdapterManager.shouldUseRemote()) {
           for (const id of ids) {
-            syncManager.addOperation('delete_session', { id }).catch(() => {});
+            syncManager.addOperation('delete_session', { id }).catch((err) => {
+              console.error('Failed to sync delete_session:', err);
+            });
           }
         }
       },
@@ -254,7 +282,9 @@ export const useChatStore = create<ChatState>()(
         }));
 
         if (apiAdapterManager.shouldUseRemote()) {
-          syncManager.addOperation('update_session', { id, title }).catch(() => {});
+          syncManager.addOperation('update_session', { id, title }).catch((err) => {
+            console.error('Failed to sync update_session:', err);
+          });
         }
       },
 
@@ -270,7 +300,9 @@ export const useChatStore = create<ChatState>()(
         }));
 
         if (apiAdapterManager.shouldUseRemote()) {
-          syncManager.addOperation('update_session', { id, is_pinned: newPinned }).catch(() => {});
+          syncManager.addOperation('update_session', { id, is_pinned: newPinned }).catch((err) => {
+            console.error('Failed to sync update_session:', err);
+          });
         }
       },
 
@@ -290,7 +322,59 @@ export const useChatStore = create<ChatState>()(
         if (apiAdapterManager.shouldUseRemote()) {
           syncManager
             .addOperation('update_session', { id, is_archived: newArchived })
-            .catch(() => {});
+            .catch((err) => {
+              console.error('Failed to sync update_session:', err);
+            });
+        }
+      },
+
+      addTagToSession: async (id, tag) => {
+        await chatRepository.addTagToSession(id, tag);
+
+        set((state) => ({
+          sessions: state.sessions.map((s) =>
+            s.id === id
+              ? { ...s, tags: [...(s.tags || []), tag], updated_at: new Date().toISOString() }
+              : s
+          ),
+        }));
+
+        if (apiAdapterManager.shouldUseRemote()) {
+          syncManager
+            .addOperation('update_session', {
+              id,
+              tags: get().sessions.find((s) => s.id === id)?.tags,
+            })
+            .catch((err) => {
+              console.error('Failed to sync update_session:', err);
+            });
+        }
+      },
+
+      removeTagFromSession: async (id, tag) => {
+        await chatRepository.removeTagFromSession(id, tag);
+
+        set((state) => ({
+          sessions: state.sessions.map((s) =>
+            s.id === id
+              ? {
+                  ...s,
+                  tags: (s.tags || []).filter((t) => t !== tag),
+                  updated_at: new Date().toISOString(),
+                }
+              : s
+          ),
+        }));
+
+        if (apiAdapterManager.shouldUseRemote()) {
+          syncManager
+            .addOperation('update_session', {
+              id,
+              tags: get().sessions.find((s) => s.id === id)?.tags,
+            })
+            .catch((err) => {
+              console.error('Failed to sync update_session:', err);
+            });
         }
       },
 
@@ -300,7 +384,9 @@ export const useChatStore = create<ChatState>()(
         if (apiAdapterManager.shouldUseRemote()) {
           syncManager
             .addOperation('create_message', message as unknown as Record<string, unknown>)
-            .catch(() => {});
+            .catch((err) => {
+              console.error('Failed to sync create_message:', err);
+            });
         }
 
         set((state) => {
@@ -320,7 +406,9 @@ export const useChatStore = create<ChatState>()(
             if (apiAdapterManager.shouldUseRemote()) {
               syncManager
                 .addOperation('update_session', { id: sessionId, title: newTitle })
-                .catch(() => {});
+                .catch((err) => {
+                  console.error('Failed to sync update_session:', err);
+                });
             }
           }
 
@@ -344,10 +432,19 @@ export const useChatStore = create<ChatState>()(
       },
 
       updateMessage: async (id, updates) => {
+        const existingMessage = await chatRepository.getMessage(id);
+
+        if (!existingMessage) {
+          console.error(`Message with id ${id} not found in repository`);
+          return;
+        }
+
         await chatRepository.updateMessage(id, updates);
 
         if (apiAdapterManager.shouldUseRemote()) {
-          syncManager.addOperation('update_message', { id, ...updates }).catch(() => {});
+          syncManager.addOperation('update_message', { id, ...updates }).catch((err) => {
+            console.error('Failed to sync update_message:', err);
+          });
         }
 
         set((state) => {
@@ -365,9 +462,19 @@ export const useChatStore = create<ChatState>()(
             targetSessionId = state.currentSessionId;
           }
 
-          if (!targetSessionId) return state;
+          if (!targetSessionId) {
+            console.warn(`Could not find session for message ${id}`);
+            return state;
+          }
 
           const sessionMessages = state.messagesBySession[targetSessionId] || [];
+          const messageExists = sessionMessages.some((m) => m.id === id);
+
+          if (!messageExists) {
+            console.warn(`Message ${id} not found in local state`);
+            return state;
+          }
+
           const updatedMessages = sessionMessages.map((m) => {
             if (m.id === id) {
               const updated = { ...m, ...updates };
@@ -391,20 +498,35 @@ export const useChatStore = create<ChatState>()(
       deleteMessage: async (id) => {
         // 先获取消息信息以确定所属会话
         const message = await chatRepository.getMessage(id);
-        const sessionId = message?.session_id;
+
+        if (!message) {
+          console.error(`Message with id ${id} not found`);
+          return;
+        }
+
+        const sessionId = message.session_id;
 
         await chatRepository.deleteMessage(id);
 
         if (apiAdapterManager.shouldUseRemote()) {
-          syncManager.addOperation('delete_message', { id }).catch(() => {});
+          syncManager.addOperation('delete_message', { id }).catch((err) => {
+            console.error('Failed to sync delete_message:', err);
+          });
         }
 
         set((state) => {
-          // 使用消息所属的会话ID，如果没有则使用当前会话
+          // 使用消息所属的会话 ID，如果没有则使用当前会话
           const targetSessionId = sessionId || state.currentSessionId;
           if (!targetSessionId) return state;
 
           const sessionMessages = state.messagesBySession[targetSessionId] || [];
+          const messageExists = sessionMessages.some((m) => m.id === id);
+
+          if (!messageExists) {
+            console.warn(`Message ${id} not found in local state, skipping state update`);
+            return state;
+          }
+
           const filteredMessages = sessionMessages.filter((m) => m.id !== id);
 
           return {
@@ -519,7 +641,9 @@ export const useChatStore = create<ChatState>()(
 
         if (apiAdapterManager.shouldUseRemote()) {
           for (const id of ids) {
-            syncManager.addOperation('delete_session', { id }).catch(() => {});
+            syncManager.addOperation('delete_session', { id }).catch((err) => {
+              console.error('Failed to sync delete_session:', err);
+            });
           }
         }
       },
@@ -539,12 +663,14 @@ export const useChatStore = create<ChatState>()(
           for (const id of ids) {
             syncManager
               .addOperation('update_session', { id, is_archived: archive })
-              .catch(() => {});
+              .catch((err) => {
+                console.error('Failed to sync update_session:', err);
+              });
           }
         }
       },
 
-      addMessageVersion: (messageId: string, content: string) => {
+      addMessageVersion: (messageId: string, content: string, versionGroupId?: string) => {
         set((state) => {
           // 查找消息所属的会话
           let targetSessionId: string | null = null;
@@ -561,14 +687,33 @@ export const useChatStore = create<ChatState>()(
 
           if (!targetSessionId) return state;
 
+          const sessionMessages = state.messagesBySession[targetSessionId] || [];
+          const message = sessionMessages.find((m) => m.id === messageId);
+
+          // 验证：如果内容相同，不创建新版本
+          if (message && message.content === content.trim()) {
+            console.warn('版本内容未变化，跳过创建新版本');
+            return state;
+          }
+
+          // 验证：检查是否与上一个版本内容相同
+          const lastVersion = message?.versions?.[message.versions.length - 1];
+          if (lastVersion && lastVersion.content === content.trim()) {
+            console.warn('版本内容与上一版本相同，跳过创建');
+            return state;
+          }
+
           const newVersion: MessageVersion = {
             id: `version_${Date.now()}`,
-            content,
+            content: content.trim(),
             created_at: new Date().toISOString(),
             is_current: true,
           };
 
-          const sessionMessages = state.messagesBySession[targetSessionId] || [];
+          // 生成或使用现有的版本组 ID
+          const newVersionGroupId =
+            versionGroupId || message?.version_group_id || `vg_${Date.now()}`;
+
           const updatedMessages = sessionMessages.map((m) => {
             if (m.id === messageId) {
               const versions = pruneVersions([
@@ -580,6 +725,7 @@ export const useChatStore = create<ChatState>()(
                 versions,
                 content,
                 is_edited: true,
+                version_group_id: newVersionGroupId,
               };
             }
             return m;
@@ -592,8 +738,25 @@ export const useChatStore = create<ChatState>()(
                 content,
                 versions: updatedMessage.versions,
                 is_edited: true,
+                version_group_id: newVersionGroupId,
               })
-              .catch(() => {});
+              .catch((err) => {
+                console.error('Failed to update message version:', err);
+              });
+
+            if (apiAdapterManager.shouldUseRemote()) {
+              syncManager
+                .addOperation('update_message', {
+                  id: messageId,
+                  content,
+                  versions: updatedMessage.versions,
+                  is_edited: true,
+                  version_group_id: newVersionGroupId,
+                })
+                .catch((err) => {
+                  console.error('Failed to sync message version:', err);
+                });
+            }
           }
 
           return {
@@ -641,12 +804,27 @@ export const useChatStore = create<ChatState>()(
 
           const updatedMessage = updatedMessages.find((m) => m.id === messageId);
           if (updatedMessage) {
+            // 同时更新本地存储和远程（如果有）
             chatRepository
               .updateMessage(messageId, {
                 content: updatedMessage.content,
                 versions: updatedMessage.versions,
               })
-              .catch(() => {});
+              .catch((err) => {
+                console.error('Failed to switch message version:', err);
+              });
+
+            if (apiAdapterManager.shouldUseRemote()) {
+              syncManager
+                .addOperation('update_message', {
+                  id: messageId,
+                  content: updatedMessage.content,
+                  versions: updatedMessage.versions,
+                })
+                .catch((err) => {
+                  console.error('Failed to sync message version switch:', err);
+                });
+            }
           }
 
           return {
@@ -686,21 +864,82 @@ export const useChatStore = create<ChatState>()(
 
         const versionGroupId = message.version_group_id || `vg_${Date.now()}`;
 
-        get().addMessageVersion(messageId, newContent);
+        // 直接在 set 中更新状态，避免 race condition
+        set((currentState) => {
+          const currentMessages = currentState.messagesBySession[targetSessionId!] || [];
+          const targetMessage = currentMessages.find((m) => m.id === messageId);
 
-        set((state) => {
-          if (!targetSessionId) return state;
+          if (!targetMessage) return currentState;
 
-          const messages = state.messagesBySession[targetSessionId] || [];
+          // 验证：如果内容相同，不创建新版本
+          if (targetMessage.content === newContent.trim()) {
+            console.warn('版本内容未变化，跳过创建新版本');
+            return currentState;
+          }
+
+          // 验证：检查是否与上一个版本内容相同
+          const lastVersion = targetMessage.versions?.[targetMessage.versions.length - 1];
+          if (lastVersion && lastVersion.content === newContent.trim()) {
+            console.warn('版本内容与上一版本相同，跳过创建');
+            return currentState;
+          }
+
+          const newVersion: MessageVersion = {
+            id: `version_${Date.now()}`,
+            content: newContent.trim(),
+            created_at: new Date().toISOString(),
+            is_current: true,
+          };
+
+          const updatedMessages = currentMessages.map((m) => {
+            if (m.id === messageId) {
+              const versions = pruneVersions([
+                ...(m.versions || []).map((v) => ({ ...v, is_current: false })),
+                newVersion,
+              ]);
+              return {
+                ...m,
+                versions,
+                content: newContent,
+                is_edited: true,
+                version_group_id: versionGroupId,
+              };
+            }
+            return m;
+          });
+
+          const updatedMessage = updatedMessages.find((m) => m.id === messageId);
+          if (updatedMessage) {
+            chatRepository
+              .updateMessage(messageId, {
+                content: newContent,
+                versions: updatedMessage.versions,
+                is_edited: true,
+                version_group_id: versionGroupId,
+              })
+              .catch((err) => {
+                console.error('Failed to update message version:', err);
+              });
+
+            if (apiAdapterManager.shouldUseRemote()) {
+              syncManager
+                .addOperation('update_message', {
+                  id: messageId,
+                  content: newContent,
+                  versions: updatedMessage.versions,
+                  is_edited: true,
+                  version_group_id: versionGroupId,
+                })
+                .catch((err) => {
+                  console.error('Failed to sync message version:', err);
+                });
+            }
+          }
+
           return {
             messagesBySession: {
-              ...state.messagesBySession,
-              [targetSessionId]: messages.map((m) => {
-                if (m.id === messageId) {
-                  return { ...m, version_group_id: versionGroupId };
-                }
-                return m;
-              }),
+              ...currentState.messagesBySession,
+              [targetSessionId!]: updatedMessages,
             },
           };
         });

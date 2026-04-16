@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import SyntaxHighlighter from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -14,22 +14,18 @@ import {
   User,
   Bot,
   Check,
-  Pause,
-  Play,
-  Share2,
-  MessageSquare,
   Edit3,
-  MoreHorizontal,
   Trash2,
   Code,
   ExternalLink,
 } from 'lucide-react';
 import { useThemeStore } from '../../../stores/themeStore';
+import { useToast } from '../../common/Toast';
 import VersionSwitcher from '../VersionSwitcher';
 import { useChatStore } from '../../../stores/chatStore';
 import type { Message } from '../../../types/chat';
 
-interface EnhancedMessageBubbleProps {
+interface UnifiedMessageBubbleProps {
   message: Message;
   onFeedback?: (messageId: string, feedback: 'helpful' | 'unclear') => void;
   onFavorite?: (messageId: string, currentStatus: boolean) => void;
@@ -37,16 +33,102 @@ interface EnhancedMessageBubbleProps {
   onRegenerate?: (messageId: string) => void;
   onEdit?: (messageId: string, newContent: string) => void;
   onDelete?: (messageId: string) => void;
-  onReply?: (messageId: string) => void;
-  onShare?: (messageId: string) => void;
   onSwitchVersion?: (messageId: string, versionId: string) => void;
   onEditAndRegenerate?: (messageId: string, newContent: string) => void;
+  onSyncVersionForGroup?: (versionGroupId: string, versionIndex: number) => void;
   isHistorical?: boolean;
   isLast?: boolean;
   isStreaming?: boolean;
 }
 
-export default function EnhancedMessageBubble({
+function CodeBlock({
+  language,
+  children,
+  isDark,
+  copiedCode,
+  onCopyCode,
+}: {
+  language?: string;
+  children: string;
+  isDark: boolean;
+  copiedCode: string | null;
+  onCopyCode: (code: string) => void;
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const lines = children.split('\n');
+  const shouldCollapse = lines.length > 10;
+
+  return (
+    <div className="relative group rounded-lg overflow-hidden my-3">
+      <div
+        className="flex items-center justify-between px-4 py-2 text-xs"
+        style={{
+          background: isDark ? '#1e1e1e' : '#f5f5f5',
+          color: isDark ? '#8b949e' : '#6e7781',
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <Code size={14} />
+          <span>{language || 'code'}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onCopyCode(children)}
+            className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-700/50 transition-colors"
+          >
+            {copiedCode === children ? (
+              <>
+                <Check size={12} />
+                <span>已复制</span>
+              </>
+            ) : (
+              <>
+                <Copy size={12} />
+                <span>复制</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+      <SyntaxHighlighter
+        language={language || 'text'}
+        style={isDark ? oneDark : oneLight}
+        customStyle={{
+          margin: 0,
+          padding: '1rem',
+          fontSize: '0.875rem',
+          maxHeight: isExpanded ? 'none' : shouldCollapse ? '250px' : 'none',
+          overflow: 'hidden',
+        }}
+        showLineNumbers
+      >
+        {children}
+      </SyntaxHighlighter>
+      {shouldCollapse && !isExpanded && (
+        <div
+          className="absolute bottom-0 left-0 right-0 h-20 flex items-end justify-center pb-2 cursor-pointer"
+          style={{
+            background: `linear-gradient(transparent, ${isDark ? '#282c34' : '#fafafa'})`,
+          }}
+          onClick={() => setIsExpanded(true)}
+        >
+          <button
+            className="flex items-center gap-1 text-xs px-3 py-1 rounded-full"
+            style={{
+              background: 'var(--color-background-secondary)',
+              color: 'var(--color-text-secondary)',
+            }}
+          >
+            <ChevronDown size={12} />
+            展开全部
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function UnifiedMessageBubble({
   message,
   onFeedback,
   onFavorite,
@@ -54,57 +136,38 @@ export default function EnhancedMessageBubble({
   onRegenerate,
   onEdit,
   onDelete,
-  onReply,
-  onShare,
   onSwitchVersion,
   onEditAndRegenerate,
   isHistorical = false,
   isLast = false,
   isStreaming: isStreamingProp = false,
-}: EnhancedMessageBubbleProps) {
+}: UnifiedMessageBubbleProps) {
   const { resolvedMode } = useThemeStore();
+  const toast = useToast();
   const [copied, setCopied] = useState(false);
   const [showSources, setShowSources] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const [showActions, setShowActions] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [showMenu, setShowMenu] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [hasCompletedTyping, setHasCompletedTyping] = useState(false);
   const [hasInitialized, setHasInitialized] = useState(false);
-  const [currentVersionIndex, setCurrentVersionIndex] = useState(0);
   const bubbleRef = useRef<HTMLDivElement>(null);
-  const speechRef = useRef<SpeechSynthesisUtterance | null>(null);
   const isUser = message.role === 'user';
   const isDark = resolvedMode === 'dark';
 
   const versions = useMemo(() => message.versions || [], [message.versions]);
   const hasVersions = versions.length > 1;
-
-  useEffect(() => {
-    if (versions.length > 0) {
-      const currentIndex = versions.findIndex((v) => v.is_current);
-      if (currentIndex !== -1) {
-        setCurrentVersionIndex(currentIndex);
-      }
-    }
-  }, [versions]);
-
   const isCurrentlyStreaming = isStreamingProp || message.isStreaming;
-
   const displayedContent = message.content;
 
-  useEffect(() => {
-    const SpeechSynthesis = window.speechSynthesis;
-    return () => {
-      if (SpeechSynthesis) {
-        SpeechSynthesis.cancel();
-      }
-    };
-  }, []);
+  // 动态计算当前版本索引，确保与 store 状态同步
+  const currentVersionIndex = useMemo(() => {
+    if (versions.length === 0) return 0;
+    const index = versions.findIndex((v) => v.is_current);
+    return index !== -1 ? index : 0;
+  }, [versions]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -175,52 +238,14 @@ export default function EnhancedMessageBubble({
     }
   };
 
-  const handleSpeak = useCallback(() => {
-    const synth = window.speechSynthesis;
-
-    if (isSpeaking) {
-      if (isPaused) {
-        synth.resume();
-        setIsPaused(false);
-      } else {
-        synth.pause();
-        setIsPaused(true);
-      }
-      return;
-    }
-
-    synth.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(message.content);
-    utterance.lang = 'zh-CN';
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
-    utterance.volume = 1.0;
-
-    utterance.onend = () => {
-      setIsSpeaking(false);
-      setIsPaused(false);
-    };
-
-    speechRef.current = utterance;
-    synth.speak(utterance);
-    setIsSpeaking(true);
-    setIsPaused(false);
-  }, [message.content, isSpeaking, isPaused]);
-
-  const handleStopSpeak = useCallback(() => {
-    const synth = window.speechSynthesis;
-    synth.cancel();
-    setIsSpeaking(false);
-    setIsPaused(false);
-  }, []);
-
   const handleEdit = () => {
     if (!editContent.trim()) {
+      toast.error('编辑失败', '内容不能为空');
       return;
     }
 
     if (editContent === message.content) {
+      toast.info('未做修改', '内容与原版本相同');
       setIsEditing(false);
       return;
     }
@@ -233,84 +258,20 @@ export default function EnhancedMessageBubble({
     setIsEditing(false);
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Escape') {
+      setIsEditing(false);
+      setEditContent(message.content);
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      handleEdit();
+    }
+  };
+
   const formatTime = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-  };
-
-  const CodeBlock = ({ language, children }: { language?: string; children: string }) => {
-    const [isExpanded, setIsExpanded] = useState(false);
-    const lines = children.split('\n');
-    const shouldCollapse = lines.length > 10;
-
-    return (
-      <div className="relative group rounded-lg overflow-hidden my-3">
-        <div
-          className="flex items-center justify-between px-4 py-2 text-xs"
-          style={{
-            background: isDark ? '#1e1e1e' : '#f5f5f5',
-            color: isDark ? '#8b949e' : '#6e7781',
-          }}
-        >
-          <div className="flex items-center gap-2">
-            <Code size={14} />
-            <span>{language || 'code'}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleCopyCode(children)}
-              className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-700/50 transition-colors"
-            >
-              {copiedCode === children ? (
-                <>
-                  <Check size={12} />
-                  <span>已复制</span>
-                </>
-              ) : (
-                <>
-                  <Copy size={12} />
-                  <span>复制</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-        <SyntaxHighlighter
-          language={language || 'text'}
-          style={isDark ? oneDark : oneLight}
-          customStyle={{
-            margin: 0,
-            padding: '1rem',
-            fontSize: '0.875rem',
-            maxHeight: isExpanded ? 'none' : shouldCollapse ? '250px' : 'none',
-            overflow: 'hidden',
-          }}
-          showLineNumbers
-        >
-          {children}
-        </SyntaxHighlighter>
-        {shouldCollapse && !isExpanded && (
-          <div
-            className="absolute bottom-0 left-0 right-0 h-20 flex items-end justify-center pb-2 cursor-pointer"
-            style={{
-              background: `linear-gradient(transparent, ${isDark ? '#282c34' : '#fafafa'})`,
-            }}
-            onClick={() => setIsExpanded(true)}
-          >
-            <button
-              className="flex items-center gap-1 text-xs px-3 py-1 rounded-full"
-              style={{
-                background: 'var(--color-background-secondary)',
-                color: 'var(--color-text-secondary)',
-              }}
-            >
-              <ChevronDown size={12} />
-              展开全部
-            </button>
-          </div>
-        )}
-      </div>
-    );
   };
 
   return (
@@ -341,7 +302,7 @@ export default function EnhancedMessageBubble({
       <div className={`flex-1 ${isUser ? 'flex flex-col items-end' : ''}`}>
         <div className={`flex items-center gap-2 mb-1 ${isUser ? 'justify-end' : ''}`}>
           <span className="text-xs font-medium" style={{ color: 'var(--color-text-primary)' }}>
-            {isUser ? '我' : 'AI助手'}
+            {isUser ? '我' : 'AI 助手'}
           </span>
           <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
             {formatTime(message.created_at)}
@@ -362,6 +323,7 @@ export default function EnhancedMessageBubble({
         </div>
 
         <div
+          ref={bubbleRef}
           className={`relative rounded-xl px-3 py-2.5 ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
           style={{
             background: isUser
@@ -383,16 +345,7 @@ export default function EnhancedMessageBubble({
               <textarea
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') {
-                    setIsEditing(false);
-                    setEditContent(message.content);
-                  }
-                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                    e.preventDefault();
-                    handleEdit();
-                  }
-                }}
+                onKeyDown={handleKeyDown}
                 className="w-full p-3 rounded-lg resize-none"
                 style={{
                   background: 'var(--color-background-secondary)',
@@ -452,7 +405,12 @@ export default function EnhancedMessageBubble({
                     const match = /language-(\w+)/.exec(className || '');
                     if (match) {
                       return (
-                        <CodeBlock language={match[1]}>
+                        <CodeBlock
+                          language={match[1]}
+                          isDark={isDark}
+                          copiedCode={copiedCode}
+                          onCopyCode={handleCopyCode}
+                        >
                           {String(children).replace(/\n$/, '')}
                         </CodeBlock>
                       );
@@ -504,51 +462,34 @@ export default function EnhancedMessageBubble({
             currentIndex={currentVersionIndex}
             isEdited={message.is_edited}
             onSwitch={(versionId, index) => {
-              setCurrentVersionIndex(index);
               onSwitchVersion?.(message.id, versionId);
 
-              if (message.version_group_id) {
-                const { syncVersionForGroup } = useChatStore.getState();
-                syncVersionForGroup(message.version_group_id, index);
+              if (message.version_group_id && onSyncVersionForGroup) {
+                onSyncVersionForGroup(message.version_group_id, index);
               }
             }}
             isUser={isUser}
           />
         )}
 
-        {message.is_regenerating && !isUser && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex items-center gap-2 mt-2"
-          >
-            <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-            >
-              <RefreshCw size={14} style={{ color: 'var(--color-primary)' }} />
-            </motion.div>
-            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              正在重新生成...
-            </span>
-          </motion.div>
-        )}
-
         {message.sources && message.sources.length > 0 && (
           <div className="mt-2">
             <button
               onClick={() => setShowSources(!showSources)}
-              className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg transition-colors"
+              className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg transition-all hover:shadow-md"
               style={{
-                color: 'var(--color-text-muted)',
-                background: 'var(--color-background-secondary)',
+                color: 'var(--color-text-secondary)',
+                background: showSources
+                  ? 'var(--color-primary-alpha)'
+                  : 'var(--color-background-secondary)',
+                border: `1px solid ${showSources ? 'var(--color-primary)' : 'var(--color-border)'}`,
               }}
             >
-              <BookOpen size={12} />
-              <span>{message.sources.length}个来源</span>
+              <BookOpen size={14} />
+              <span className="font-medium">查看 {message.sources.length} 个参考来源</span>
               <ChevronDown
-                size={12}
-                className={`transition-transform ${showSources ? 'rotate-180' : ''}`}
+                size={14}
+                className={`transition-transform duration-200 ${showSources ? 'rotate-180' : ''}`}
               />
             </button>
 
@@ -558,32 +499,80 @@ export default function EnhancedMessageBubble({
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
                   exit={{ opacity: 0, height: 0 }}
-                  className="mt-2 space-y-2"
+                  transition={{ duration: 0.2 }}
+                  className="mt-3 space-y-3"
                 >
-                  {message.sources.map((source) => (
-                    <div
+                  {message.sources.map((source, index) => (
+                    <motion.div
                       key={source.id}
-                      className="p-3 rounded-lg text-left"
-                      style={{ background: 'var(--color-background-secondary)' }}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: index * 0.05 }}
+                      className="p-4 rounded-xl border transition-all hover:shadow-lg"
+                      style={{
+                        background: 'var(--color-surface)',
+                        border: '1px solid var(--color-border-light)',
+                      }}
                     >
-                      <div className="flex items-center justify-between mb-1">
-                        <span
-                          className="text-xs font-medium"
-                          style={{ color: 'var(--color-text-primary)' }}
-                        >
-                          {source.title}
-                        </span>
-                        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                          相关度: {Math.round(source.relevance * 100)}%
-                        </span>
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
+                            style={{
+                              background: 'var(--color-primary-alpha)',
+                              color: 'var(--color-primary)',
+                            }}
+                          >
+                            {index + 1}
+                          </div>
+                          <span
+                            className="text-sm font-semibold"
+                            style={{ color: 'var(--color-text-primary)' }}
+                          >
+                            {source.title}
+                          </span>
+                        </div>
+                        {source.relevance && (
+                          <div
+                            className="px-2 py-1 rounded-full text-xs font-medium"
+                            style={{
+                              background:
+                                source.relevance >= 0.9
+                                  ? 'var(--color-success-alpha)'
+                                  : source.relevance >= 0.7
+                                    ? 'var(--color-warning-alpha)'
+                                    : 'var(--color-background-secondary)',
+                              color:
+                                source.relevance >= 0.9
+                                  ? 'var(--color-success)'
+                                  : source.relevance >= 0.7
+                                    ? 'var(--color-warning)'
+                                    : 'var(--color-text-muted)',
+                            }}
+                          >
+                            相关度 {Math.round(source.relevance * 100)}%
+                          </div>
+                        )}
                       </div>
                       <p
-                        className="text-xs line-clamp-2"
+                        className="text-sm leading-relaxed"
                         style={{ color: 'var(--color-text-secondary)' }}
                       >
                         {source.content}
                       </p>
-                    </div>
+                      {source.url && (
+                        <a
+                          href={source.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-2 inline-flex items-center gap-1 text-xs font-medium hover:underline"
+                          style={{ color: 'var(--color-primary)' }}
+                        >
+                          <ExternalLink size={12} />
+                          查看原文
+                        </a>
+                      )}
+                    </motion.div>
                   ))}
                 </motion.div>
               )}
@@ -603,10 +592,7 @@ export default function EnhancedMessageBubble({
               {!isUser && (
                 <>
                   <motion.button
-                    whileHover={{
-                      scale: 1.1,
-                      backgroundColor: 'var(--color-background-secondary)',
-                    }}
+                    whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => onFeedback?.(message.id, 'helpful')}
                     className="p-1.5 rounded-lg transition-colors"
@@ -624,10 +610,7 @@ export default function EnhancedMessageBubble({
                   </motion.button>
 
                   <motion.button
-                    whileHover={{
-                      scale: 1.1,
-                      backgroundColor: 'var(--color-background-secondary)',
-                    }}
+                    whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => onFeedback?.(message.id, 'unclear')}
                     className="p-1.5 rounded-lg transition-colors"
@@ -645,10 +628,7 @@ export default function EnhancedMessageBubble({
                   </motion.button>
 
                   <motion.button
-                    whileHover={{
-                      scale: 1.1,
-                      backgroundColor: 'var(--color-background-secondary)',
-                    }}
+                    whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => onFavorite?.(message.id, message.is_favorite || false)}
                     className="p-1.5 rounded-lg transition-colors"
@@ -663,30 +643,8 @@ export default function EnhancedMessageBubble({
                     <Star size={14} fill={message.is_favorite ? 'currentColor' : 'none'} />
                   </motion.button>
 
-                  <div className="w-px h-4 mx-1.5" style={{ background: 'var(--color-border)' }} />
-
                   <motion.button
-                    whileHover={{
-                      scale: 1.1,
-                      backgroundColor: 'var(--color-background-secondary)',
-                    }}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={isSpeaking ? (isPaused ? handleSpeak : handleStopSpeak) : handleSpeak}
-                    className="p-1.5 rounded-lg transition-colors"
-                    style={{
-                      color: isSpeaking ? 'var(--color-primary)' : 'var(--color-text-muted)',
-                      background: isSpeaking ? 'var(--color-primary-light)' : 'transparent',
-                    }}
-                    title={isSpeaking ? (isPaused ? '继续朗读' : '暂停朗读') : '朗读'}
-                  >
-                    {isSpeaking && !isPaused ? <Pause size={14} /> : <Play size={14} />}
-                  </motion.button>
-
-                  <motion.button
-                    whileHover={{
-                      scale: 1.1,
-                      backgroundColor: 'var(--color-background-secondary)',
-                    }}
+                    whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => onRegenerate?.(message.id)}
                     className="p-1.5 rounded-lg transition-colors"
@@ -699,10 +657,7 @@ export default function EnhancedMessageBubble({
               )}
 
               <motion.button
-                whileHover={{
-                  scale: 1.1,
-                  backgroundColor: 'var(--color-background-secondary)',
-                }}
+                whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.9 }}
                 onClick={handleCopy}
                 className="p-1.5 rounded-lg transition-colors"
@@ -715,45 +670,11 @@ export default function EnhancedMessageBubble({
                 {copied ? <Check size={14} /> : <Copy size={14} />}
               </motion.button>
 
-              <motion.button
-                whileHover={{
-                  scale: 1.1,
-                  backgroundColor: 'var(--color-background-secondary)',
-                }}
-                whileTap={{ scale: 0.9 }}
-                onClick={() => onReply?.(message.id)}
-                className="p-1.5 rounded-lg transition-colors"
-                style={{ color: 'var(--color-text-muted)' }}
-                title="回复"
-              >
-                <MessageSquare size={14} />
-              </motion.button>
-
-              <motion.button
-                whileHover={{
-                  scale: 1.1,
-                  backgroundColor: 'var(--color-background-secondary)',
-                }}
-                whileTap={{ scale: 0.9 }}
-                onClick={() => onShare?.(message.id)}
-                className="p-1.5 rounded-lg transition-colors"
-                style={{ color: 'var(--color-text-muted)' }}
-                title="分享"
-              >
-                <Share2 size={14} />
-              </motion.button>
-
               {isUser && (
                 <motion.button
-                  whileHover={{
-                    scale: 1.1,
-                    backgroundColor: 'var(--color-background-secondary)',
-                  }}
+                  whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.9 }}
-                  onClick={() => {
-                    setEditContent(message.content);
-                    setIsEditing(true);
-                  }}
+                  onClick={() => setIsEditing(true)}
                   className="p-1.5 rounded-lg transition-colors"
                   style={{ color: 'var(--color-text-muted)' }}
                   title="编辑"
@@ -762,58 +683,16 @@ export default function EnhancedMessageBubble({
                 </motion.button>
               )}
 
-              <div className="relative">
-                <motion.button
-                  whileHover={{
-                    scale: 1.1,
-                    backgroundColor: 'var(--color-background-secondary)',
-                  }}
-                  whileTap={{ scale: 0.9 }}
-                  onClick={() => setShowMenu(!showMenu)}
-                  className="p-1.5 rounded-lg transition-colors"
-                  style={{ color: 'var(--color-text-muted)' }}
-                  title="更多"
-                >
-                  <MoreHorizontal size={14} />
-                </motion.button>
-
-                <AnimatePresence>
-                  {showMenu && (
-                    <>
-                      <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-40"
-                        onClick={() => setShowMenu(false)}
-                      />
-                      <motion.div
-                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                        className={`absolute top-full mt-1 py-1 rounded-lg shadow-lg z-50 min-w-[120px] ${
-                          isUser ? 'right-0' : 'left-0'
-                        }`}
-                        style={{
-                          background: 'var(--color-surface)',
-                          border: '1px solid var(--color-border)',
-                        }}
-                      >
-                        <button
-                          onClick={() => {
-                            onDelete?.(message.id);
-                            setShowMenu(false);
-                          }}
-                          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
-                        >
-                          <Trash2 size={14} />
-                          删除
-                        </button>
-                      </motion.div>
-                    </>
-                  )}
-                </AnimatePresence>
-              </div>
+              <motion.button
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={() => onDelete?.(message.id)}
+                className="p-1.5 rounded-lg transition-colors"
+                style={{ color: 'var(--color-error)' }}
+                title="删除"
+              >
+                <Trash2 size={14} />
+              </motion.button>
             </motion.div>
           )}
         </AnimatePresence>

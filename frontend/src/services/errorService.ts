@@ -98,13 +98,17 @@ class ErrorService {
     return ErrorSeverity.MEDIUM;
   }
 
-  generateUserMessage(error: unknown, _category: ErrorCategory): string {
+  generateUserMessage(error: unknown, category: ErrorCategory): string {
     if (error instanceof AxiosError) {
       const status = error.response?.status;
       const data = error.response?.data as { detail?: string; message?: string };
 
       if (data?.detail || data?.message) {
         return data.detail ?? data.message ?? '';
+      }
+
+      if (category === ErrorCategory.NETWORK) {
+        return '网络连接失败，请检查网络设置';
       }
 
       switch (status) {

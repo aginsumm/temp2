@@ -255,13 +255,14 @@ export function measureComponentRender(
   };
 }
 
-export function useRenderTime(_componentName: string): number {
+export function useRenderTime(componentName: string): number {
   const renderTimeRef = useRef(0);
   const startTimeRef = useRef(performance.now());
 
   useEffect(() => {
     renderTimeRef.current = performance.now() - startTimeRef.current;
     startTimeRef.current = performance.now();
+    console.debug(`[Performance] ${componentName} render time:`, renderTimeRef.current);
   });
 
   return renderTimeRef.current;

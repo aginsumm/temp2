@@ -1,4 +1,5 @@
 @import './styles/themes.css';
+@import './styles/panel-heritage-bg.css';
 
 @tailwind base;
 @tailwind components;

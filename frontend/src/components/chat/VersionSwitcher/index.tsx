@@ -1,6 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronRight, Clock, Edit3, GitBranch, Sparkles } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Edit3,
+  GitBranch,
+  Sparkles,
+  Eye,
+  RotateCcw,
+} from 'lucide-react';
+import { useToast } from '../../common/Toast';
 
 interface MessageVersion {
   id: string;
@@ -40,9 +50,14 @@ export default function VersionSwitcher({
   isUser = false,
 }: VersionSwitcherProps) {
   const [direction, setDirection] = useState(0);
+  const [showAllVersions, setShowAllVersions] = useState(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [viewingVersion, setViewingVersion] = useState<MessageVersion | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const toast = useToast();
 
   const hasVersions = versions.length > 1;
+  const currentVersion = versions[currentIndex];
 
   useEffect(() => {
     setDirection(0);
@@ -60,8 +75,22 @@ export default function VersionSwitcher({
   const handleNext = () => {
     if (currentIndex < versions.length - 1) {
       setDirection(1);
-      onSwitch(versions[currentIndex].id, currentIndex + 1);
+      onSwitch(versions[currentIndex + 1].id, currentIndex + 1);
     }
+  };
+
+  const handleRestoreLatest = () => {
+    setShowRestoreConfirm(true);
+  };
+
+  const confirmRestore = () => {
+    const lastIndex = versions.length - 1;
+    if (currentIndex !== lastIndex) {
+      setDirection(1);
+      onSwitch(versions[lastIndex].id, lastIndex);
+      toast.success('已恢复', '已恢复到最新版本');
+    }
+    setShowRestoreConfirm(false);
   };
 
   const variants = {
@@ -82,7 +111,8 @@ export default function VersionSwitcher({
     }),
   };
 
-  if (!hasVersions && isEdited) {
+  // 仅显示"已编辑"标签的情况：当消息被编辑但版本数据尚未加载完成时
+  if (isEdited && !hasVersions) {
     return (
       <motion.div
         initial={{ opacity: 0, y: 5 }}
@@ -114,7 +144,7 @@ export default function VersionSwitcher({
     >
       <div
         ref={containerRef}
-        className="inline-flex items-center gap-1 p-1 rounded-xl"
+        className="inline-flex items-center gap-1.5 p-1.5 rounded-xl"
         style={{
           background: 'var(--color-background-secondary)',
           border: '1px solid var(--color-border-light)',
@@ -124,19 +154,23 @@ export default function VersionSwitcher({
         <motion.button
           onClick={handlePrev}
           disabled={currentIndex === 0}
-          whileHover={{ scale: currentIndex === 0 ? 1 : 1.1 }}
-          whileTap={{ scale: currentIndex === 0 ? 1 : 0.9 }}
-          className="p-1.5 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+          whileHover={{ scale: currentIndex === 0 ? 1 : 1.05 }}
+          whileTap={{ scale: currentIndex === 0 ? 1 : 0.95 }}
+          className="px-2 py-1.5 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1"
           style={{
             color: currentIndex === 0 ? 'var(--color-text-muted)' : 'var(--color-primary)',
-            background: currentIndex === 0 ? 'transparent' : 'var(--color-primary-light)',
+            background: currentIndex === 0 ? 'transparent' : 'var(--color-primary-alpha)',
           }}
         >
           <ChevronLeft size={14} />
+          <span className="text-xs font-medium">上一版本</span>
         </motion.button>
 
-        <div className="flex items-center gap-1 px-2">
-          <GitBranch size={12} style={{ color: 'var(--color-text-muted)' }} />
+        <div
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
+          style={{ background: 'var(--color-surface)' }}
+        >
+          <GitBranch size={14} style={{ color: 'var(--color-text-muted)' }} />
           <AnimatePresence mode="wait" custom={direction}>
             <motion.span
               key={currentIndex}
@@ -146,96 +180,434 @@ export default function VersionSwitcher({
               animate="center"
               exit="exit"
               transition={{ duration: 0.2 }}
-              className="text-xs font-medium min-w-[40px] text-center"
+              className="text-sm font-semibold min-w-[60px] text-center"
               style={{ color: 'var(--color-text-primary)' }}
             >
-              {currentIndex + 1}/{versions.length}
+              V{currentIndex + 1}
             </motion.span>
           </AnimatePresence>
+          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            / {versions.length}
+          </span>
         </div>
 
         <motion.button
           onClick={handleNext}
           disabled={currentIndex === versions.length - 1}
-          whileHover={{ scale: currentIndex === versions.length - 1 ? 1 : 1.1 }}
-          whileTap={{ scale: currentIndex === versions.length - 1 ? 1 : 0.9 }}
-          className="p-1.5 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+          whileHover={{ scale: currentIndex === versions.length - 1 ? 1 : 1.05 }}
+          whileTap={{ scale: currentIndex === versions.length - 1 ? 1 : 0.95 }}
+          className="px-2 py-1.5 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1"
           style={{
             color:
               currentIndex === versions.length - 1
                 ? 'var(--color-text-muted)'
                 : 'var(--color-primary)',
             background:
-              currentIndex === versions.length - 1 ? 'transparent' : 'var(--color-primary-light)',
+              currentIndex === versions.length - 1 ? 'transparent' : 'var(--color-primary-alpha)',
           }}
         >
+          <span className="text-xs font-medium">下一版本</span>
           <ChevronRight size={14} />
         </motion.button>
       </div>
 
-      <div className={`flex items-center gap-2 mt-1.5 ${isUser ? 'justify-end' : ''}`}>
-        <div className="flex items-center gap-1">
-          {versions.map((version, index) => (
-            <motion.button
-              key={version.id}
-              onClick={() => {
-                setDirection(index > currentIndex ? 1 : -1);
-                onSwitch(version.id, index);
-              }}
-              whileHover={{ scale: 1.2 }}
-              whileTap={{ scale: 0.9 }}
-              className="relative w-2 h-2 rounded-full transition-all"
-              style={{
-                background: index === currentIndex ? 'var(--color-primary)' : 'var(--color-border)',
-                boxShadow: index === currentIndex ? '0 0 8px var(--color-primary)' : 'none',
-              }}
-            >
-              {index === currentIndex && (
-                <motion.div
-                  layoutId="activeIndicator"
-                  className="absolute inset-0 rounded-full"
-                  style={{ background: 'var(--color-primary)' }}
-                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+      <div className={`flex items-center gap-3 mt-2 ${isUser ? 'justify-end' : ''}`}>
+        {/* 版本指示器 - 当版本数 <= 10 时显示所有圆点，否则只显示数字 */}
+        {versions.length <= 10 ? (
+          <div className="flex items-center gap-1.5">
+            {versions.map((version, index) => (
+              <motion.button
+                key={version.id}
+                onClick={() => {
+                  setDirection(index > currentIndex ? 1 : -1);
+                  onSwitch(version.id, index);
+                }}
+                whileHover={{ scale: 1.15 }}
+                whileTap={{ scale: 0.9 }}
+                className="group relative"
+                title={`版本 ${index + 1} - ${formatTimeAgo(version.created_at)}`}
+              >
+                <div
+                  className="w-2.5 h-2.5 rounded-full transition-all"
+                  style={{
+                    background:
+                      index === currentIndex ? 'var(--color-primary)' : 'var(--color-border)',
+                    boxShadow: index === currentIndex ? '0 0 8px var(--color-primary)' : 'none',
+                  }}
                 />
-              )}
-            </motion.button>
-          ))}
-        </div>
+                {index === currentIndex && (
+                  <motion.div
+                    layoutId="activeIndicator"
+                    className="absolute inset-0 rounded-full"
+                    style={{ background: 'var(--color-primary)' }}
+                    transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                  />
+                )}
+                {/* 悬停时显示版本信息和查看按钮 */}
+                <div
+                  className="absolute -top-16 left-1/2 -translate-x-1/2 px-3 py-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20"
+                  style={{
+                    background: 'var(--color-surface)',
+                    border: '1px solid var(--color-border)',
+                    color: 'var(--color-text-primary)',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  }}
+                >
+                  <div className="text-xs font-medium mb-1">版本 {index + 1}</div>
+                  <div className="text-[10px] mb-2" style={{ color: 'var(--color-text-muted)' }}>
+                    {formatTimeAgo(version.created_at)}
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setViewingVersion(version);
+                    }}
+                    className="w-full flex items-center justify-center gap-1 text-xs px-2 py-1 rounded transition-colors"
+                    style={{
+                      background: 'var(--color-primary-alpha)',
+                      color: 'var(--color-primary)',
+                    }}
+                  >
+                    <Eye size={12} />
+                    <span>查看</span>
+                  </button>
+                </div>
+              </motion.button>
+            ))}
+          </div>
+        ) : (
+          <div
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
+            style={{ background: 'var(--color-background-secondary)' }}
+          >
+            <GitBranch size={14} style={{ color: 'var(--color-text-muted)' }} />
+            <span className="text-xs font-medium" style={{ color: 'var(--color-text-primary)' }}>
+              版本 {currentIndex + 1} / {versions.length}
+            </span>
+          </div>
+        )}
+
+        {versions.length > 2 && (
+          <motion.button
+            onClick={() => setShowAllVersions(!showAllVersions)}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg transition-colors"
+            style={{
+              background: 'var(--color-background-secondary)',
+              color: 'var(--color-text-muted)',
+            }}
+            title="查看完整版本历史"
+          >
+            <Eye size={12} />
+            <span>{showAllVersions ? '收起' : versions.length} 个版本</span>
+          </motion.button>
+        )}
 
         <div
-          className="flex items-center gap-1 text-[10px]"
-          style={{ color: 'var(--color-text-muted)' }}
+          className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg"
+          style={{
+            background: 'var(--color-background-secondary)',
+            color: 'var(--color-text-muted)',
+          }}
         >
-          <Clock size={10} />
-          <span>{formatTimeAgo(versions[currentIndex].created_at)}</span>
+          <Clock size={12} />
+          <span>{formatTimeAgo(currentVersion.created_at)}</span>
         </div>
 
         {isEdited && (
           <span
-            className="text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-1"
+            className="text-xs px-2 py-1 rounded-lg flex items-center gap-1.5"
             style={{
               background:
                 'linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%)',
               color: 'var(--color-primary)',
+              border: '1px solid rgba(59, 130, 246, 0.2)',
             }}
           >
-            <Edit3 size={9} />
-            编辑
+            <Edit3 size={12} />
+            已编辑
           </span>
+        )}
+
+        {currentIndex !== versions.length - 1 && versions.length > 1 && (
+          <motion.button
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            onClick={handleRestoreLatest}
+            className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg transition-colors"
+            style={{
+              background: 'var(--color-success-alpha)',
+              color: 'var(--color-success)',
+              border: '1px solid var(--color-success)',
+            }}
+            title="恢复到最新版本"
+          >
+            <RotateCcw size={12} />
+            <span>恢复最新</span>
+          </motion.button>
+        )}
+
+        {currentIndex === versions.length - 1 && versions.length > 1 && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg"
+            style={{
+              background: 'var(--color-success-alpha)',
+              color: 'var(--color-success)',
+            }}
+          >
+            <Sparkles size={12} />
+            <span>最新版本</span>
+          </motion.div>
         )}
       </div>
 
-      {currentIndex === versions.length - 1 && versions.length > 1 && (
-        <motion.div
-          initial={{ opacity: 0, y: 5 }}
-          animate={{ opacity: 1, y: 0 }}
-          className={`flex items-center gap-1 mt-1.5 text-[10px] ${isUser ? 'justify-end' : ''}`}
-          style={{ color: 'var(--color-success)' }}
-        >
-          <Sparkles size={10} />
-          <span>最新版本</span>
-        </motion.div>
-      )}
+      <AnimatePresence>
+        {showAllVersions && versions.length > 2 && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mt-3 p-3 rounded-xl"
+            style={{
+              background: 'var(--color-background-secondary)',
+              border: '1px solid var(--color-border)',
+              maxHeight: '400px',
+              overflowY: 'auto',
+            }}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>
+                版本历史 ({versions.length}个)
+              </span>
+              <button
+                onClick={() => setShowAllVersions(false)}
+                className="text-xs"
+                style={{ color: 'var(--color-text-muted)' }}
+              >
+                收起
+              </button>
+            </div>
+            <div className="space-y-1.5">
+              {versions.map((version, index) => (
+                <motion.button
+                  key={version.id}
+                  onClick={() => {
+                    setDirection(index > currentIndex ? 1 : -1);
+                    onSwitch(version.id, index);
+                    setShowAllVersions(false);
+                  }}
+                  whileHover={{ scale: 1.01 }}
+                  className={`w-full flex items-center justify-between p-2 rounded-lg transition-all ${
+                    index === currentIndex ? 'ring-2 ring-primary' : ''
+                  }`}
+                  style={{
+                    background:
+                      index === currentIndex
+                        ? 'var(--color-primary-alpha)'
+                        : 'var(--color-surface)',
+                    border:
+                      index === currentIndex
+                        ? '1px solid var(--color-primary)'
+                        : '1px solid var(--color-border)',
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`w-2 h-2 rounded-full ${
+                        index === currentIndex ? 'bg-primary' : 'bg-border'
+                      }`}
+                    />
+                    <span
+                      className={`text-sm font-medium ${
+                        index === currentIndex ? 'text-primary' : 'text-text-primary'
+                      }`}
+                    >
+                      版本 {index + 1}
+                    </span>
+                    {index === versions.length - 1 && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full"
+                        style={{
+                          background: 'var(--color-success-alpha)',
+                          color: 'var(--color-success)',
+                        }}
+                      >
+                        最新
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                      {formatTimeAgo(version.created_at)}
+                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setViewingVersion(version);
+                      }}
+                      className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors"
+                      style={{
+                        background: 'var(--color-primary-alpha)',
+                        color: 'var(--color-primary)',
+                      }}
+                      title="查看此版本内容"
+                    >
+                      <Eye size={12} />
+                      <span>查看</span>
+                    </button>
+                    {index === currentIndex && (
+                      <Eye size={14} style={{ color: 'var(--color-primary)' }} />
+                    )}
+                  </div>
+                </motion.button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Restore Confirmation Dialog */}
+      <AnimatePresence>
+        {showRestoreConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            onClick={() => setShowRestoreConfirm(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md mx-auto"
+            >
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">确认恢复</h3>
+              <p className="text-gray-600 dark:text-gray-400 mb-6">
+                确定要恢复到最新版本吗？当前版本将被保存为历史版本。
+              </p>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setShowRestoreConfirm(false)}
+                  className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={confirmRestore}
+                  className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
+                >
+                  恢复
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Version Detail View Dialog */}
+      <AnimatePresence>
+        {viewingVersion && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+            onClick={() => setViewingVersion(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white dark:bg-gray-800 rounded-lg max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white">版本详情</h3>
+                  <span className="text-sm px-2 py-1 rounded bg-primary-alpha text-primary">
+                    版本 {versions.findIndex((v) => v.id === viewingVersion.id) + 1}
+                  </span>
+                  {viewingVersion.is_current && (
+                    <span className="text-xs px-2 py-1 rounded-full bg-success-alpha text-success">
+                      当前版本
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => setViewingVersion(null)}
+                  className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+                  title="关闭"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Info Bar */}
+              <div className="flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-gray-700/50">
+                <div className="flex items-center gap-4 text-xs text-gray-600 dark:text-gray-400">
+                  <span className="flex items-center gap-1">
+                    <Clock size={14} />
+                    {new Date(viewingVersion.created_at).toLocaleString('zh-CN')}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <GitBranch size={14} />
+                    {formatTimeAgo(viewingVersion.created_at)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-auto p-4">
+                <div className="prose dark:prose-invert max-w-none">
+                  <div className="whitespace-pre-wrap text-gray-900 dark:text-gray-100 leading-relaxed">
+                    {viewingVersion.content}
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer Actions */}
+              <div className="flex items-center justify-end gap-3 p-4 border-t border-gray-200 dark:border-gray-700">
+                <button
+                  onClick={() => setViewingVersion(null)}
+                  className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                >
+                  关闭
+                </button>
+                {!viewingVersion.is_current && (
+                  <button
+                    onClick={() => {
+                      const index = versions.findIndex((v) => v.id === viewingVersion.id);
+                      if (index !== -1) {
+                        setDirection(1);
+                        onSwitch(viewingVersion.id, index);
+                        toast.success('已恢复', '已恢复到此版本');
+                      }
+                      setViewingVersion(null);
+                    }}
+                    className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center gap-2"
+                  >
+                    <RotateCcw size={16} />
+                    <span>恢复此版本</span>
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

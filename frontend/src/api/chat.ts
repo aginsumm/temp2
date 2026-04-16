@@ -21,6 +21,8 @@ function transformSession(data: Record<string, unknown>): Session {
     updated_at: data.updated_at as string,
     message_count: (data.message_count as number) || 0,
     is_pinned: (data.is_pinned as boolean) || false,
+    is_archived: (data.is_archived as boolean) || false,
+    tags: (data.tags as string[]) || [],
   };
 }
 
@@ -544,6 +546,38 @@ export const chatApi = {
       share_url: '',
       expires_at: '',
     };
+  },
+
+  getRecommendations: async (sessionId: string) => {
+    if (apiAdapterManager.shouldUseLocal()) {
+      return {
+        questions: [
+          { id: '1', question: '武汉木雕的传承人有哪些？' },
+          { id: '2', question: '浮雕技法的特点是什么？' },
+          { id: '3', question: '黄鹤楼木雕作品的历史背景？' },
+        ],
+      };
+    }
+
+    try {
+      const response = await apiAdapterManager.request<{
+        questions: Array<{ id: string; question: string }>;
+      }>({
+        method: 'GET',
+        url: '/chat/recommendations',
+        params: { session_id: sessionId },
+      });
+      return response.data;
+    } catch (error) {
+      console.warn('Failed to load recommendations, using local data');
+      return {
+        questions: [
+          { id: '1', question: '武汉木雕的传承人有哪些？' },
+          { id: '2', question: '浮雕技法的特点是什么？' },
+          { id: '3', question: '黄鹤楼木雕作品的历史背景？' },
+        ],
+      };
+    }
   },
 
   isApiConnected: () => apiAdapterManager.getOnlineStatus(),

@@ -1,21 +1,12 @@
-import { useState } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import {
-  MessageSquare,
-  Network,
-  User,
-  Menu,
-  X,
-  LogOut,
-  ChevronDown,
-} from 'lucide-react';
+import { MessageSquare, Network, User, Menu, X, LogOut, ChevronDown } from 'lucide-react';
 import { useAuthStore } from '../../../stores/authStore';
 import { useUIStore } from '../../../stores/uiStore';
 import NetworkStatusManager from '../../common/NetworkStatusManager';
 import ThemeToggle from '../../common/ThemeToggle';
 import logoSvg from '../../../assets/icon/logo.svg';
-import { useAuthStore } from '../../../stores/authStore';
 
 const navItems = [
   { path: '/', label: '首页', icon: null },
@@ -29,19 +20,19 @@ export default function Header() {
   // === 新增获取用户状态和退出方法的代码 ===
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
-  
+
   const handleLogout = async () => {
     setShowUserMenu(false);
     await logout(); // 清除 Zustand 和 localStorage 中的 Token
     // 移除 navigate('/login'), 保留在当前页面
   };
-  
- // 计算显示的文字：优先取昵称首字，其次用户名首字，最后默认为“游”
-  const displayName = user?.username || "";
-  const displayChar = displayName.charAt(0).toUpperCase() || "游";
-  
+
+  // 计算显示的文字：优先取昵称首字，其次用户名首字，最后默认为“游”
+  const displayName = user?.username || '';
+  const displayChar = displayName.charAt(0).toUpperCase() || '游';
+
   // 👉 新增这一行！我们把 user 打印出来看看
-  console.log("当前 Header 里的 user 数据:", user);
+  console.log('当前 Header 里的 user 数据:', user);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const userInitial = useMemo(() => {
@@ -146,15 +137,15 @@ export default function Header() {
                 style={{
                   background: user?.avatar ? 'transparent' : 'var(--gradient-primary)',
                   color: 'var(--color-text-inverse)',
-                  border: user?.avatar ? '1px solid var(--color-border-light)' : 'none'
+                  border: user?.avatar ? '1px solid var(--color-border-light)' : 'none',
                 }}
               >
                 {user?.avatar ? (
                   // 如果有头像，显示图片
-                  <img 
-                    src={user.avatar} 
-                    alt={displayName} 
-                    className="w-full h-full object-cover rounded-full" 
+                  <img
+                    src={user.avatar}
+                    alt={displayName}
+                    className="w-full h-full object-cover rounded-full"
                   />
                 ) : (
                   // 如果没有头像，显示首字符

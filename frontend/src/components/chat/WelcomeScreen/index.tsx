@@ -14,11 +14,18 @@ import {
 } from 'lucide-react';
 import { useThemeStore } from '../../../stores/themeStore';
 import { getThemeVisual } from '../../../config/themes/heritageThemes';
+import chatApi from '../../../api/chat';
 import '../../../styles/theme-patterns.css';
 
 interface WelcomeScreenProps {
   onQuestionClick: (question: string) => void;
   userName?: string;
+  sessionId?: string;
+}
+
+interface RecommendedQuestion {
+  id: string;
+  question: string;
 }
 
 const quickQuestions = [
@@ -110,9 +117,15 @@ const itemVariants = {
   },
 };
 
-export default function WelcomeScreen({ onQuestionClick, userName }: WelcomeScreenProps) {
+export default function WelcomeScreen({
+  onQuestionClick,
+  userName,
+  sessionId,
+}: WelcomeScreenProps) {
   const [currentTip, setCurrentTip] = useState(0);
   const [greeting, setGreeting] = useState('');
+  const [questions, setQuestions] = useState<RecommendedQuestion[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const { currentTheme, themeId } = useThemeStore();
   const visual = useMemo(() => {
     if (currentTheme?.visual) {
@@ -135,6 +148,32 @@ export default function WelcomeScreen({ onQuestionClick, userName }: WelcomeScre
     }, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // 加载个性化推荐问题
+  useEffect(() => {
+    const loadRecommendations = async () => {
+      if (!sessionId) {
+        // 没有 sessionId 时使用默认问题
+        setQuestions([]);
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        const data = await chatApi.getRecommendations(sessionId);
+        if (data && data.questions) {
+          setQuestions(data.questions);
+        }
+      } catch (error) {
+        console.warn('Failed to load recommendations:', error);
+        setQuestions([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadRecommendations();
+  }, [sessionId]);
 
   return (
     <div
@@ -343,7 +382,7 @@ export default function WelcomeScreen({ onQuestionClick, userName }: WelcomeScre
               style={{ color: 'var(--color-text-muted)' }}
             >
               <Lightbulb size={12} />
-              快速开始
+              {questions.length > 0 ? '为您推荐' : '快速开始'}
             </h2>
             <div
               className="h-px flex-1 max-w-16"
@@ -351,59 +390,99 @@ export default function WelcomeScreen({ onQuestionClick, userName }: WelcomeScre
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {quickQuestions.map((category, categoryIndex) => (
-              <motion.div
-                key={category.category}
-                initial={{ opacity: 0, y: 24 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.55 + categoryIndex * 0.12 }}
-                whileHover={{ y: -4, scale: 1.01 }}
-                className="rounded-xl overflow-hidden group cursor-pointer shadow-sm hover:shadow-md transition-all duration-300"
-                style={{
-                  background: 'var(--color-surface)',
-                  border: '1px solid var(--color-border-light)',
-                  boxShadow: `0 2px 16px -4px ${category.bgGlow}`,
-                }}
-              >
-                <div
-                  className="px-4 py-3.5 relative overflow-hidden"
-                  style={{ background: category.gradient }}
+          {isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div
+                className="animate-spin rounded-full h-6 w-6 border-b-2"
+                style={{ borderColor: 'var(--color-primary)' }}
+              />
+            </div>
+          ) : questions.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {questions.map((question, index) => (
+                <motion.button
+                  key={question.id}
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.55 + index * 0.08 }}
+                  whileHover={{ y: -4, scale: 1.02 }}
+                  onClick={() => onQuestionClick(question.question)}
+                  className="p-4 rounded-xl text-left transition-all duration-300 shadow-sm hover:shadow-md"
+                  style={{
+                    background: 'var(--color-surface)',
+                    border: '1px solid var(--color-border-light)',
+                  }}
                 >
-                  <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity" />
-                  <div
-                    className="relative flex items-center gap-2.5"
-                    style={{ color: 'var(--color-text-inverse)' }}
-                  >
-                    <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center backdrop-blur-sm">
-                      <category.icon size={18} />
-                    </div>
-                    <span className="font-semibold text-base">{category.category}</span>
-                  </div>
-                </div>
-                <div className="p-2">
-                  {category.questions.map((question, questionIndex) => (
-                    <motion.button
-                      key={questionIndex}
-                      whileHover={{ x: 4 }}
-                      onClick={() => onQuestionClick(question)}
-                      className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left text-sm transition-all group/item"
+                  <div className="flex items-start justify-between gap-3">
+                    <span
+                      className="text-sm font-medium flex-1"
                       style={{ color: 'var(--color-text-primary)' }}
                     >
-                      <span className="line-clamp-1 flex-1">{question}</span>
-                      <motion.div
-                        initial={{ opacity: 0, x: -8 }}
-                        whileHover={{ opacity: 1, x: 0 }}
-                        className="ml-1.5"
+                      {question.question}
+                    </span>
+                    <ArrowRight
+                      size={16}
+                      style={{ color: 'var(--color-primary)', flexShrink: 0 }}
+                    />
+                  </div>
+                </motion.button>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {quickQuestions.map((category, categoryIndex) => (
+                <motion.div
+                  key={category.category}
+                  initial={{ opacity: 0, y: 24 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.55 + categoryIndex * 0.12 }}
+                  whileHover={{ y: -4, scale: 1.01 }}
+                  className="rounded-xl overflow-hidden group cursor-pointer shadow-sm hover:shadow-md transition-all duration-300"
+                  style={{
+                    background: 'var(--color-surface)',
+                    border: '1px solid var(--color-border-light)',
+                    boxShadow: `0 2px 16px -4px ${category.bgGlow}`,
+                  }}
+                >
+                  <div
+                    className="px-4 py-3.5 relative overflow-hidden"
+                    style={{ background: category.gradient }}
+                  >
+                    <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <div
+                      className="relative flex items-center gap-2.5"
+                      style={{ color: 'var(--color-text-inverse)' }}
+                    >
+                      <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center backdrop-blur-sm">
+                        <category.icon size={18} />
+                      </div>
+                      <span className="font-semibold text-base">{category.category}</span>
+                    </div>
+                  </div>
+                  <div className="p-2">
+                    {category.questions.map((question, questionIndex) => (
+                      <motion.button
+                        key={questionIndex}
+                        whileHover={{ x: 4 }}
+                        onClick={() => onQuestionClick(question)}
+                        className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left text-sm transition-all group/item"
+                        style={{ color: 'var(--color-text-primary)' }}
                       >
-                        <ArrowRight size={14} style={{ color: 'var(--color-primary)' }} />
-                      </motion.div>
-                    </motion.button>
-                  ))}
-                </div>
-              </motion.div>
-            ))}
-          </div>
+                        <span className="line-clamp-1 flex-1">{question}</span>
+                        <motion.div
+                          initial={{ opacity: 0, x: -8 }}
+                          whileHover={{ opacity: 1, x: 0 }}
+                          className="ml-1.5"
+                        >
+                          <ArrowRight size={14} style={{ color: 'var(--color-primary)' }} />
+                        </motion.div>
+                      </motion.button>
+                    ))}
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          )}
         </motion.div>
 
         <motion.div variants={itemVariants} className="text-center">

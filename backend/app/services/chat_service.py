@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, desc
 from sqlalchemy.orm import selectinload
 import uuid
+import json
 
 from app.models.chat import Session, Message, MessageSource, MessageEntity, MessageRole
 from app.schemas.chat import (
@@ -67,6 +68,11 @@ class SessionService:
         update_data = data.model_dump(exclude_unset=True)
         if update_data:
             update_data["updated_at"] = datetime.utcnow()
+            
+            # 处理 tags 字段，转换为 JSON 字符串
+            if "tags" in update_data and update_data["tags"] is not None:
+                update_data["tags"] = json.dumps(update_data["tags"])
+            
             await self.db.execute(
                 update(Session).where(Session.id == session_id).values(**update_data)
             )

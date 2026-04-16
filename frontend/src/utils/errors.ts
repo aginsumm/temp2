@@ -1,327 +1,207 @@
-import { AxiosError } from 'axios';
-
-export enum ErrorCode {
-  SUCCESS = 0,
-  UNKNOWN_ERROR = 1000,
-  INVALID_REQUEST = 1001,
-  VALIDATION_ERROR = 1002,
-  RATE_LIMIT_EXCEEDED = 1003,
-
-  AUTHENTICATION_FAILED = 2001,
-  TOKEN_EXPIRED = 2002,
-  PERMISSION_DENIED = 2003,
-  ACCOUNT_DISABLED = 2004,
-
-  RESOURCE_NOT_FOUND = 3001,
-  RESOURCE_ALREADY_EXISTS = 3002,
-  RESOURCE_LOCKED = 3003,
-
-  DATABASE_ERROR = 4001,
-  CACHE_ERROR = 4002,
-  EXTERNAL_SERVICE_ERROR = 4003,
-
-  LLM_SERVICE_ERROR = 5001,
-  LLM_TIMEOUT = 5002,
-  LLM_RATE_LIMIT = 5003,
-  LLM_MODEL_NOT_AVAILABLE = 5004,
-
-  KNOWLEDGE_GRAPH_ERROR = 6001,
-  ENTITY_NOT_FOUND = 6002,
-  RELATION_NOT_FOUND = 6003,
-  GRAPH_QUERY_ERROR = 6004,
-
-  NETWORK_ERROR = 7001,
-  CONNECTION_TIMEOUT = 7002,
-  SERVICE_UNAVAILABLE = 7003,
-
-  FILE_UPLOAD_ERROR = 8001,
-  FILE_TOO_LARGE = 8002,
-  INVALID_FILE_FORMAT = 8003,
-}
-
-export interface ApiErrorDetail {
-  field?: string;
-  message: string;
-  value?: unknown;
-  type?: string;
-}
-
-export interface ApiErrorResponse {
-  code: number;
-  message: string;
-  details?: ApiErrorDetail[];
-  trace_id: string;
-  timestamp?: string;
-  cause?: string;
-}
-
-export class AppError extends Error {
-  public readonly code: ErrorCode;
-  public readonly details: ApiErrorDetail[];
-  public readonly traceId: string;
-  public readonly timestamp: string;
-  public readonly cause?: string;
-  public readonly isNetworkError: boolean;
-  public readonly isRetryable: boolean;
+export class APIError extends Error {
+  public code: string;
+  public status: number;
+  public details?: Record<string, unknown>;
+  public recoverable: boolean;
 
   constructor(
-    code: ErrorCode,
     message: string,
-    options?: {
-      details?: ApiErrorDetail[];
-      traceId?: string;
-      timestamp?: string;
-      cause?: string;
-      isNetworkError?: boolean;
-      isRetryable?: boolean;
-    }
+    code: string = 'UNKNOWN_ERROR',
+    status: number = 500,
+    details?: Record<string, unknown>,
+    recoverable: boolean = true
   ) {
     super(message);
-    this.name = 'AppError';
+    this.name = 'APIError';
     this.code = code;
-    this.details = options?.details || [];
-    this.traceId = options?.traceId || 'unknown';
-    this.timestamp = options?.timestamp || new Date().toISOString();
-    this.cause = options?.cause;
-    this.isNetworkError = options?.isNetworkError || false;
-    this.isRetryable = options?.isRetryable || false;
+    this.status = status;
+    this.details = details;
+    this.recoverable = recoverable;
   }
 
-  static fromApiError(response: ApiErrorResponse): AppError {
-    const code = response.code as ErrorCode;
-    const isRetryable = [
-      ErrorCode.NETWORK_ERROR,
-      ErrorCode.CONNECTION_TIMEOUT,
-      ErrorCode.SERVICE_UNAVAILABLE,
-    ].includes(code);
+  static fromResponse(response: Response, data?: unknown): APIError {
+    const status = response.status;
+    let code = 'UNKNOWN_ERROR';
+    let message = '请求失败';
+    let recoverable = true;
 
-    return new AppError(code, response.message, {
-      details: response.details,
-      traceId: response.trace_id,
-      timestamp: response.timestamp,
-      cause: response.cause,
-      isNetworkError: code >= 7000 && code < 8000,
-      isRetryable,
-    });
-  }
-
-  static fromAxiosError(error: AxiosError<ApiErrorResponse>): AppError {
-    if (error.response) {
-      const apiError = error.response.data;
-      if (apiError && apiError.code !== undefined) {
-        return AppError.fromApiError(apiError);
-      }
-
-      const status = error.response.status;
-      let code = ErrorCode.UNKNOWN_ERROR;
-      let message = 'Unknown error';
-
-      switch (status) {
-        case 400:
-          code = ErrorCode.INVALID_REQUEST;
-          message = 'Invalid request';
-          break;
-        case 401:
-          code = ErrorCode.AUTHENTICATION_FAILED;
-          message = 'Authentication failed';
-          break;
-        case 403:
-          code = ErrorCode.PERMISSION_DENIED;
-          message = 'Permission denied';
-          break;
-        case 404:
-          code = ErrorCode.RESOURCE_NOT_FOUND;
-          message = 'Resource not found';
-          break;
-        case 429:
-          code = ErrorCode.RATE_LIMIT_EXCEEDED;
-          message = 'Rate limit exceeded';
-          break;
-        case 500:
-          code = ErrorCode.EXTERNAL_SERVICE_ERROR;
-          message = 'Server error';
-          break;
-        case 502:
-        case 503:
-        case 504:
-          code = ErrorCode.SERVICE_UNAVAILABLE;
-          message = 'Service unavailable';
-          break;
-      }
-
-      return new AppError(code, message, {
-        isRetryable: status >= 500,
-      });
+    if (status === 400) {
+      code = 'BAD_REQUEST';
+      message = '请求参数错误';
+    } else if (status === 401) {
+      code = 'UNAUTHORIZED';
+      message = '未授权，请重新登录';
+      recoverable = false;
+    } else if (status === 403) {
+      code = 'FORBIDDEN';
+      message = '没有权限访问此资源';
+      recoverable = false;
+    } else if (status === 404) {
+      code = 'NOT_FOUND';
+      message = '请求的资源不存在';
+    } else if (status === 408) {
+      code = 'REQUEST_TIMEOUT';
+      message = '请求超时，请重试';
+    } else if (status === 429) {
+      code = 'RATE_LIMITED';
+      message = '请求过于频繁，请稍后再试';
+    } else if (status >= 500) {
+      code = 'SERVER_ERROR';
+      message = '服务器错误，请稍后再试';
     }
 
-    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-      return new AppError(ErrorCode.CONNECTION_TIMEOUT, 'Connection timeout', {
-        isNetworkError: true,
-        isRetryable: true,
-      });
+    if (data && typeof data === 'object' && 'detail' in data) {
+      message = String((data as { detail: unknown }).detail);
     }
 
-    if (!window.navigator.onLine) {
-      return new AppError(ErrorCode.NETWORK_ERROR, 'No internet connection', {
-        isNetworkError: true,
-        isRetryable: true,
-      });
-    }
-
-    return new AppError(ErrorCode.NETWORK_ERROR, error.message || 'Network error', {
-      isNetworkError: true,
-      isRetryable: true,
-    });
+    return new APIError(message, code, status, data as Record<string, unknown>, recoverable);
   }
 
-  get isAuthError(): boolean {
-    return this.code >= 2000 && this.code < 3000;
+  static networkError(): APIError {
+    return new APIError(
+      '网络连接失败，请检查网络设置',
+      'NETWORK_ERROR',
+      0,
+      undefined,
+      true
+    );
   }
 
-  get isValidationError(): boolean {
-    return this.code === ErrorCode.VALIDATION_ERROR;
+  static timeoutError(): APIError {
+    return new APIError(
+      '请求超时，请重试',
+      'TIMEOUT_ERROR',
+      0,
+      undefined,
+      true
+    );
   }
 
-  get isNotFoundError(): boolean {
-    return this.code === ErrorCode.RESOURCE_NOT_FOUND;
-  }
-
-  get isRateLimited(): boolean {
-    return this.code === ErrorCode.RATE_LIMIT_EXCEEDED || this.code === ErrorCode.LLM_RATE_LIMIT;
-  }
-
-  get isLLMError(): boolean {
-    return this.code >= 5000 && this.code < 6000;
-  }
-
-  get isGraphError(): boolean {
-    return this.code >= 6000 && this.code < 7000;
-  }
-
-  getFieldError(field: string): string | undefined {
-    return this.details.find((d) => d.field === field)?.message;
-  }
-
-  toUserMessage(): string {
-    if (this.isNetworkError) {
-      return '网络连接失败，请检查网络后重试';
-    }
-
-    if (this.isRateLimited) {
-      return '请求过于频繁，请稍后再试';
-    }
-
-    if (this.isAuthError) {
-      if (this.code === ErrorCode.TOKEN_EXPIRED) {
-        return '登录已过期，请重新登录';
-      }
-      return '认证失败，请重新登录';
-    }
-
-    if (this.isLLMError) {
-      return 'AI服务暂时不可用，请稍后重试';
-    }
-
-    if (this.isGraphError) {
-      return '知识图谱服务暂时不可用';
-    }
-
-    if (this.isNotFoundError) {
-      return '请求的资源不存在';
-    }
-
-    return this.message || '操作失败，请重试';
+  static parseError(originalError: Error): APIError {
+    return new APIError(
+      '数据解析错误',
+      'PARSE_ERROR',
+      0,
+      { originalError: originalError.message },
+      true
+    );
   }
 }
 
-export function isAppError(error: unknown): error is AppError {
-  return error instanceof AppError;
-}
+export class StreamError extends Error {
+  public code: string;
+  public recoverable: boolean;
 
-export function handleApiError(error: unknown): AppError {
-  if (isAppError(error)) {
-    return error;
+  constructor(message: string, code: string = 'STREAM_ERROR', recoverable: boolean = true) {
+    super(message);
+    this.name = 'StreamError';
+    this.code = code;
+    this.recoverable = recoverable;
   }
 
-  if ((error as AxiosError).isAxiosError) {
-    return AppError.fromAxiosError(error as AxiosError<ApiErrorResponse>);
+  static connectionLost(): StreamError {
+    return new StreamError('流式连接中断', 'CONNECTION_LOST', true);
   }
 
-  if (error instanceof Error) {
-    return new AppError(ErrorCode.UNKNOWN_ERROR, error.message);
+  static parseError(): StreamError {
+    return new StreamError('流式数据解析错误', 'PARSE_ERROR', true);
   }
 
-  return new AppError(ErrorCode.UNKNOWN_ERROR, 'Unknown error');
+  static serverError(message: string): StreamError {
+    return new StreamError(message, 'SERVER_ERROR', true);
+  }
 }
 
-export function getErrorMessage(error: unknown): string {
-  const appError = handleApiError(error);
-  return appError.toUserMessage();
+export function isRetryableError(error: unknown): boolean {
+  if (error instanceof APIError) {
+    return error.recoverable && [0, 408, 429, 500, 502, 503, 504].includes(error.status);
+  }
+  if (error instanceof StreamError) {
+    return error.recoverable;
+  }
+  if (error instanceof TypeError && error.message.includes('fetch')) {
+    return true;
+  }
+  return false;
 }
 
-export interface RetryConfig {
-  maxRetries: number;
-  delayMs: number;
-  backoffMultiplier?: number;
-  maxDelayMs?: number;
-  shouldRetry?: (error: AppError) => boolean;
-}
-
-export async function withRetry<T>(fn: () => Promise<T>, config: RetryConfig): Promise<T> {
-  const {
-    maxRetries,
-    delayMs,
-    backoffMultiplier = 2,
-    maxDelayMs = 30000,
-    shouldRetry = (error) => error.isRetryable,
-  } = config;
-
-  let lastError: AppError | null = null;
-  let currentDelay = delayMs;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  options: {
+    maxRetries?: number;
+    delay?: number;
+    backoff?: boolean;
+    onRetry?: (attempt: number, error: Error) => void;
+  } = {}
+): Promise<T> {
+  const { maxRetries = 3, delay = 1000, backoff = true, onRetry } = options;
+  
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       return await fn();
     } catch (error) {
-      lastError = handleApiError(error);
-
-      if (attempt === maxRetries || !shouldRetry(lastError)) {
-        throw lastError;
+      lastError = error instanceof Error ? error : new Error(String(error));
+      
+      if (!isRetryableError(error) || attempt === maxRetries) {
+        throw error;
       }
-
-      await new Promise((resolve) => setTimeout(resolve, currentDelay));
-      currentDelay = Math.min(currentDelay * backoffMultiplier, maxDelayMs);
+      
+      if (onRetry) {
+        onRetry(attempt, lastError);
+      }
+      
+      const waitTime = backoff ? delay * Math.pow(2, attempt - 1) : delay;
+      await new Promise(resolve => setTimeout(resolve, waitTime));
     }
   }
-
+  
   throw lastError;
 }
 
-export interface ErrorBoundaryState {
-  hasError: boolean;
-  error: AppError | null;
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof APIError) {
+    return error.message;
+  }
+  if (error instanceof StreamError) {
+    return error.message;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  return '发生未知错误';
 }
 
-export function getErrorSeverity(error: AppError): 'low' | 'medium' | 'high' | 'critical' {
-  if (error.isAuthError) {
-    return 'medium';
+export function getErrorAction(error: unknown): { label: string; action: () => void } | null {
+  if (error instanceof APIError) {
+    if (error.code === 'UNAUTHORIZED') {
+      return {
+        label: '重新登录',
+        action: () => {
+          window.location.href = '/login';
+        },
+      };
+    }
+    if (error.recoverable) {
+      return {
+        label: '重试',
+        action: () => {
+          window.location.reload();
+        },
+      };
+    }
   }
-
-  if (error.isNetworkError) {
-    return 'medium';
+  if (isRetryableError(error)) {
+    return {
+      label: '重试',
+      action: () => {
+        window.location.reload();
+      },
+    };
   }
-
-  if (error.isValidationError) {
-    return 'low';
-  }
-
-  if (error.isLLMError || error.isGraphError) {
-    return 'high';
-  }
-
-  if (error.code === ErrorCode.UNKNOWN_ERROR) {
-    return 'critical';
-  }
-
-  return 'medium';
+  return null;
 }

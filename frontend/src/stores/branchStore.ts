@@ -192,7 +192,7 @@ export const useBranchStore = create<BranchState>()(
         if (!tree || branchId === tree.rootBranchId) return false;
         if (!tree.branches[branchId]) return false;
 
-        const { [branchId]: deleted, ...remainingBranches } = tree.branches;
+        const { [branchId]: _deleted, ...remainingBranches } = tree.branches;
         
         let newActiveBranchId = tree.activeBranchId;
         if (tree.activeBranchId === branchId) {

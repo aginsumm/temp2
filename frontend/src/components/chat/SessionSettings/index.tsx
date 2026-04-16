@@ -1,15 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  X,
-  Trash2,
-  Pin,
-  Archive,
-  Info,
-  ChevronRight,
-  Edit3,
-  Check,
-} from 'lucide-react';
+import { X, Trash2, Pin, Archive, Info, ChevronRight, Edit3, Check } from 'lucide-react';
 
 interface SessionSettingsProps {
   isOpen: boolean;
@@ -20,6 +11,8 @@ interface SessionSettingsProps {
     created_at: string;
     message_count: number;
     is_pinned?: boolean;
+    is_archived?: boolean;
+    tags?: string[];
   } | null;
   onUpdateTitle: (title: string) => void;
   onPin: () => void;
@@ -45,7 +38,7 @@ export default function SessionSettings({
   const [activeSection, setActiveSection] = useState<'general' | 'tags' | 'advanced'>('general');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editTitle, setEditTitle] = useState(session?.title || '');
-  const [tags, setTags] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>(session?.tags || []);
   const [newTag, setNewTag] = useState('');
 
   const handleSaveTitle = () => {
@@ -99,7 +92,10 @@ export default function SessionSettings({
               borderLeft: '1px solid var(--color-border)',
             }}
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
+            <div
+              className="flex items-center justify-between px-4 py-3 border-b"
+              style={{ borderColor: 'var(--color-border)' }}
+            >
               <h2 className="font-semibold" style={{ color: 'var(--color-text-primary)' }}>
                 对话设置
               </h2>
@@ -115,7 +111,7 @@ export default function SessionSettings({
             <div className="flex border-b" style={{ borderColor: 'var(--color-border)' }}>
               {[
                 { id: 'general', label: '基本' },
-                { id: 'tags', label: '标签' },
+                // { id: 'tags', label: '标签' }, // 暂时隐藏标签功能，作为后续扩展
                 { id: 'advanced', label: '高级' },
               ].map((tab) => (
                 <button
@@ -141,7 +137,10 @@ export default function SessionSettings({
               {activeSection === 'general' && (
                 <div className="p-4 space-y-4">
                   <div>
-                    <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--color-text-muted)' }}>
+                    <label
+                      className="text-xs font-medium mb-2 block"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
                       对话标题
                     </label>
                     {isEditingTitle ? (
@@ -183,7 +182,10 @@ export default function SessionSettings({
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--color-text-muted)' }}>
+                    <label
+                      className="text-xs font-medium mb-2 block"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
                       对话信息
                     </label>
                     <div className="space-y-2">
@@ -213,7 +215,10 @@ export default function SessionSettings({
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--color-text-muted)' }}>
+                    <label
+                      className="text-xs font-medium mb-2 block"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
                       快捷操作
                     </label>
                     <div className="space-y-1">
@@ -249,7 +254,10 @@ export default function SessionSettings({
               {activeSection === 'tags' && (
                 <div className="p-4 space-y-4">
                   <div>
-                    <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--color-text-muted)' }}>
+                    <label
+                      className="text-xs font-medium mb-2 block"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
                       已添加标签
                     </label>
                     <div className="flex flex-wrap gap-2">
@@ -283,7 +291,10 @@ export default function SessionSettings({
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--color-text-muted)' }}>
+                    <label
+                      className="text-xs font-medium mb-2 block"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
                       添加标签
                     </label>
                     <div className="flex gap-2 mb-3">
@@ -329,7 +340,9 @@ export default function SessionSettings({
                               : 'hover:bg-amber-100 hover:text-amber-700'
                           }`}
                           style={{
-                            background: tags.includes(tag) ? 'var(--color-background-secondary)' : 'transparent',
+                            background: tags.includes(tag)
+                              ? 'var(--color-background-secondary)'
+                              : 'transparent',
                             border: '1px solid var(--color-border)',
                             color: 'var(--color-text-primary)',
                           }}
@@ -344,10 +357,16 @@ export default function SessionSettings({
 
               {activeSection === 'advanced' && (
                 <div className="p-4 space-y-4">
-                  <div className="p-3 rounded-lg" style={{ background: 'var(--color-background-secondary)' }}>
+                  <div
+                    className="p-3 rounded-lg"
+                    style={{ background: 'var(--color-background-secondary)' }}
+                  >
                     <div className="flex items-center gap-2 mb-2">
                       <Info size={14} style={{ color: 'var(--color-text-muted)' }} />
-                      <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>
+                      <span
+                        className="text-xs font-medium"
+                        style={{ color: 'var(--color-text-muted)' }}
+                      >
                         危险操作
                       </span>
                     </div>

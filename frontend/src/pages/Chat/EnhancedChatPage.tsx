@@ -1,16 +1,23 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useChatStore } from '../../stores/chatStore';
+import { useChatStore, pruneVersions } from '../../stores/chatStore';
 import { useUIStore } from '../../stores/uiStore';
 import { chatDataService } from '../../services/chat';
 import { useToast } from '../../components/common/Toast';
-import type { Entity, Source, Message } from '../../types/chat';
+import type {
+  Entity,
+  Source,
+  Message,
+  Relation,
+  GraphSnapshot,
+  MessageVersion,
+} from '../../types/chat';
 
 import Sidebar from '../../components/chat/Sidebar';
 import RightPanel from '../../components/chat/RightPanel';
-import AdvancedInputArea from '../../components/chat/AdvancedInputArea';
-import EnhancedMessageBubble from '../../components/chat/EnhancedMessageBubble';
+import UnifiedInputArea from '../../components/chat/UnifiedInputArea';
+import UnifiedMessageBubble from '../../components/chat/UnifiedMessageBubble';
 import ChatToolbar from '../../components/chat/ChatToolbar';
 import CommandPalette from '../../components/chat/CommandPalette';
 import WelcomeScreen from '../../components/chat/WelcomeScreen';
@@ -26,9 +33,9 @@ export default function EnhancedChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<(() => void) | null>(null);
-  const [, setCurrentEntities] = useState<Entity[]>([]);
   const [currentKeywords, setCurrentKeywords] = useState<string[]>([]);
-  const [, setCurrentSources] = useState<Source[]>([]);
+  const [currentEntities, setCurrentEntities] = useState<Entity[]>([]);
+  const [currentRelations, setCurrentRelations] = useState<Relation[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
   const [newMessageIds, setNewMessageIds] = useState(new Set<string>());
   const [quotedMessage, setQuotedMessage] = useState<Message | null>(null);
@@ -36,7 +43,6 @@ export default function EnhancedChatPage() {
   const [showMessageSearch, setShowMessageSearch] = useState(false);
   const [showSessionSettings, setShowSessionSettings] = useState(false);
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
-  const [, setSelectedMessages] = useState<Set<string>>(new Set());
   const [autoScroll, setAutoScroll] = useState(true);
   const [streamingContent, setStreamingContent] = useState<string>('');
   const toast = useToast();
@@ -60,6 +66,10 @@ export default function EnhancedChatPage() {
     createSession,
     addMessageVersion,
     switchMessageVersion,
+    editAndRegenerate,
+    archiveSession,
+    addTagToSession,
+    removeTagFromSession,
   } = useChatStore();
 
   const messages = useMemo(
@@ -100,12 +110,13 @@ export default function EnhancedChatPage() {
         setShowSessionSettings(false);
         setShowKeyboardShortcuts(false);
         setQuotedMessage(null);
-        setSelectedMessages(new Set());
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
   }, [toggleMode, toggleSidebar]);
 
   useEffect(() => {
@@ -149,6 +160,18 @@ export default function EnhancedChatPage() {
     }
   }, [messages, autoScroll]);
 
+  // 当消息变化时，自动更新图谱数据（显示最新消息的图谱）
+  useEffect(() => {
+    if (messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage.role === 'assistant' && lastMessage.entities) {
+        setCurrentEntities(lastMessage.entities);
+        if (lastMessage.keywords) setCurrentKeywords(lastMessage.keywords);
+        if (lastMessage.relations) setCurrentRelations(lastMessage.relations);
+      }
+    }
+  }, [messages]);
+
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
@@ -174,6 +197,106 @@ export default function EnhancedChatPage() {
     }
   }, [createSession, toast]);
 
+  // ========== 辅助函数：确保活跃会话 ==========
+  const ensureActiveSession = useCallback(async (): Promise<string> => {
+    let activeSessionId = currentSessionId;
+
+    if (!activeSessionId) {
+      if (sessions.length > 0 && sessions[0]?.id) {
+        activeSessionId = sessions[0].id;
+        await switchSession(activeSessionId);
+      } else {
+        const newSession = await handleCreateSession();
+        if (!newSession || !newSession.id) {
+          throw new Error('无法创建新会话');
+        }
+        activeSessionId = newSession.id;
+      }
+    }
+
+    return activeSessionId;
+  }, [currentSessionId, sessions, switchSession, handleCreateSession]);
+
+  // ========== 辅助函数：构建用户消息 ==========
+  const buildUserMessage = useCallback(
+    (sessionId: string, content: string): Message => {
+      const messageContent = quotedMessage ? `> ${quotedMessage.content}\n\n${content}` : content;
+
+      // 创建初始版本（V1）
+      const initialVersion: MessageVersion = {
+        id: `version_${Date.now()}`,
+        content: messageContent,
+        created_at: new Date().toISOString(),
+        is_current: true,
+      };
+
+      return {
+        id: `msg_${Date.now()}_user`,
+        session_id: sessionId,
+        role: 'user',
+        content: messageContent,
+        created_at: new Date().toISOString(),
+        parent_message_id: quotedMessage?.id,
+        versions: [initialVersion],
+      };
+    },
+    [quotedMessage]
+  );
+
+  // ========== 辅助函数：创建流式消息 ==========
+  const createStreamingMessage = useCallback(
+    (sessionId: string): Message => ({
+      id: `msg_${Date.now()}_assistant_streaming`,
+      session_id: sessionId,
+      role: 'assistant',
+      content: '',
+      created_at: new Date().toISOString(),
+      isStreaming: true,
+    }),
+    []
+  );
+
+  // ========== 辅助函数：更新图谱数据 ==========
+  const updateGraphData = useCallback(
+    (entities?: Entity[], keywords?: string[], sources?: Source[], relations?: Relation[]) => {
+      if (entities) setCurrentEntities(entities);
+      if (keywords) setCurrentKeywords(keywords);
+      if (relations) setCurrentRelations(relations);
+      console.debug('Graph data updated:', { entities, keywords, sources, relations });
+    },
+    []
+  );
+
+  // ========== 辅助函数：加载快照 ==========
+  const handleLoadSnapshot = useCallback(
+    (snapshot: GraphSnapshot) => {
+      // 更新所有图谱数据
+      if (snapshot.entities && snapshot.entities.length > 0) {
+        setCurrentEntities(snapshot.entities);
+      }
+      if (snapshot.keywords && snapshot.keywords.length > 0) {
+        setCurrentKeywords(snapshot.keywords);
+      }
+      if (snapshot.relations && snapshot.relations.length > 0) {
+        setCurrentRelations(snapshot.relations);
+      }
+
+      // 通过全局事件通知其他组件（如知识图谱）
+      const event = new CustomEvent('loadSnapshot', {
+        detail: {
+          entities: snapshot.entities,
+          relations: snapshot.relations,
+          keywords: snapshot.keywords,
+        },
+      });
+      window.dispatchEvent(event);
+
+      toast.success('快照已加载', '请在图谱标签页查看');
+    },
+    [toast]
+  );
+
+  // ========== 核心函数：流式响应处理 ==========
   const startStreamingResponse = useCallback(
     async (sessionId: string, userContent: string, streamingMsgId: string) => {
       setLoading(true);
@@ -198,24 +321,58 @@ export default function EnhancedChatPage() {
         async (aiMessage) => {
           setStreamingContent('');
 
+          // 获取当前消息，检查是否已有版本
+          const currentMsg = useChatStore
+            .getState()
+            .messagesBySession[sessionId]?.find((m) => m.id === streamingMsgId);
+          const existingVersions = currentMsg?.versions || [];
+
+          // 创建版本
+          let versions = existingVersions;
+          if (aiMessage.content && aiMessage.content.trim()) {
+            if (existingVersions.length === 0) {
+              // 没有版本，创建初始版本（V1）
+              const initialVersion: MessageVersion = {
+                id: `version_${Date.now()}`,
+                content: aiMessage.content,
+                created_at: new Date().toISOString(),
+                is_current: true,
+              };
+              versions = [initialVersion];
+            } else {
+              // 有版本（重新生成），创建新版本
+              const newVersion: MessageVersion = {
+                id: `version_${Date.now()}`,
+                content: aiMessage.content,
+                created_at: new Date().toISOString(),
+                is_current: true,
+              };
+              // 将所有旧版本标记为 is_current: false，并添加新版本
+              versions = pruneVersions([
+                ...existingVersions.map((v) => ({ ...v, is_current: false })),
+                newVersion,
+              ]);
+            }
+          }
+
           await updateMessage(streamingMsgId, {
             content: aiMessage.content,
             sources: aiMessage.sources,
             entities: aiMessage.entities,
             keywords: aiMessage.keywords,
+            relations: aiMessage.relations,
+            versions,
             isStreaming: false,
           });
           setNewMessageIds((prev) => new Set([...prev, streamingMsgId]));
 
-          if (aiMessage.entities) {
-            setCurrentEntities(aiMessage.entities);
-          }
-          if (aiMessage.keywords) {
-            setCurrentKeywords(aiMessage.keywords);
-          }
-          if (aiMessage.sources) {
-            setCurrentSources(aiMessage.sources);
-          }
+          // 更新图谱数据
+          updateGraphData(
+            aiMessage.entities,
+            aiMessage.keywords,
+            aiMessage.sources,
+            aiMessage.relations
+          );
 
           setLoading(false);
           setStreaming(false);
@@ -241,13 +398,12 @@ export default function EnhancedChatPage() {
       setStreaming,
       setStreamingContent,
       setNewMessageIds,
-      setCurrentEntities,
-      setCurrentKeywords,
-      setCurrentSources,
+      updateGraphData,
       toast,
     ]
   );
 
+  // ========== 主函数：发送消息 ==========
   const handleSendMessage = useCallback(
     async (content: string) => {
       if (!content || !content.trim()) {
@@ -256,47 +412,21 @@ export default function EnhancedChatPage() {
       }
 
       try {
-        let activeSessionId = currentSessionId;
+        // 1. 确保有活跃会话
+        const activeSessionId = await ensureActiveSession();
 
-        if (!activeSessionId) {
-          if (sessions.length > 0 && sessions[0]?.id) {
-            activeSessionId = sessions[0].id;
-            await switchSession(activeSessionId);
-          } else {
-            const newSession = await handleCreateSession();
-            if (!newSession || !newSession.id) {
-              toast.error('创建失败', '无法创建新对话');
-              return;
-            }
-            activeSessionId = newSession.id;
-          }
-        }
-
-        const userMessage = {
-          id: `msg_${Date.now()}_user`,
-          session_id: activeSessionId,
-          role: 'user' as const,
-          content: quotedMessage ? `> ${quotedMessage.content}\n\n${content}` : content,
-          created_at: new Date().toISOString(),
-          quoted_message: quotedMessage ? quotedMessage.id : undefined,
-        };
-
+        // 2. 构建并发送用户消息
+        const userMessage = buildUserMessage(activeSessionId, content);
         await addMessage(userMessage);
         setNewMessageIds((prev) => new Set([...prev, userMessage.id]));
         setQuotedMessage(null);
 
-        const streamingMsgId = `msg_${Date.now()}_assistant_streaming`;
-
-        const streamingMessage: Message = {
-          id: streamingMsgId,
-          session_id: activeSessionId,
-          role: 'assistant',
-          content: '',
-          created_at: new Date().toISOString(),
-          isStreaming: true,
-        };
+        // 3. 创建流式消息
+        const streamingMsgId = createStreamingMessage(activeSessionId).id!;
+        const streamingMessage = { ...createStreamingMessage(activeSessionId), id: streamingMsgId };
         await addMessage(streamingMessage);
 
+        // 4. 启动流式响应
         const abort = await startStreamingResponse(activeSessionId, content, streamingMsgId);
         abortControllerRef.current = abort;
       } catch (error) {
@@ -308,12 +438,10 @@ export default function EnhancedChatPage() {
       }
     },
     [
-      currentSessionId,
-      sessions,
+      ensureActiveSession,
+      buildUserMessage,
+      createStreamingMessage,
       addMessage,
-      handleCreateSession,
-      switchSession,
-      quotedMessage,
       startStreamingResponse,
       toast,
       setLoading,
@@ -376,11 +504,16 @@ export default function EnhancedChatPage() {
         if (userMessage.role === 'user') {
           const aiMessage = messages[messageIndex];
 
+          // 将所有现有版本的 is_current 设置为 false，准备接收新版本
+          const existingVersions = aiMessage.versions || [];
+          const versions = existingVersions.map((v) => ({ ...v, is_current: false }));
+
           await updateMessage(aiMessage.id, {
             content: '',
             sources: [],
             entities: [],
             keywords: [],
+            versions,
             isStreaming: true,
           });
 
@@ -399,20 +532,26 @@ export default function EnhancedChatPage() {
   const handleEdit = useCallback(
     async (messageId: string, newContent: string) => {
       try {
-        addMessageVersion(messageId, newContent);
-        toast.success('已修改', '消息内容已更新');
+        // 获取消息的 version_group_id（如果有）
+        const message = messages.find((m) => m.id === messageId);
+        const versionGroupId = message?.version_group_id;
+
+        // 使用 addMessageVersion 并传递 versionGroupId，确保版本组功能正常工作
+        addMessageVersion(messageId, newContent, versionGroupId);
+        toast.success('已修改', '消息内容已更新，版本已保存');
       } catch (error) {
         console.error('Failed to edit message:', error);
         toast.error('修改失败', '无法修改消息内容');
       }
     },
-    [addMessageVersion, toast]
+    [addMessageVersion, toast, messages]
   );
 
   const handleSwitchVersion = useCallback(
     async (messageId: string, versionId: string) => {
       try {
         switchMessageVersion(messageId, versionId);
+        // 移除成功提示，界面变化本身就是反馈
       } catch (error) {
         console.error('Failed to switch version:', error);
         toast.error('切换失败', '无法切换消息版本');
@@ -424,17 +563,27 @@ export default function EnhancedChatPage() {
   const handleEditAndRegenerate = useCallback(
     async (messageId: string, newContent: string) => {
       try {
-        addMessageVersion(messageId, newContent);
+        // 使用 chatStore 的 editAndRegenerate 方法
+        // 该方法会创建新版本、更新消息内容、设置 version_group_id
+        editAndRegenerate(messageId, newContent);
 
-        const messageIndex = messages.findIndex((m) => m.id === messageId);
-        if (messageIndex >= 0) {
-          const nextMessage = messages[messageIndex + 1];
-          if (nextMessage && nextMessage.role === 'assistant' && currentSessionId) {
+        // 等待状态更新完成（Zustand 的 set 是同步的，但我们需要重新获取最新状态）
+        const updatedMessages = useChatStore.getState().messagesBySession[currentSessionId!] || [];
+        const messageIndex = updatedMessages.findIndex((m) => m.id === messageId);
+
+        if (messageIndex >= 0 && currentSessionId) {
+          const nextMessage = updatedMessages[messageIndex + 1];
+          if (nextMessage && nextMessage.role === 'assistant') {
+            // 将所有现有版本的 is_current 设置为 false，准备接收新版本
+            const existingVersions = nextMessage.versions || [];
+            const versions = existingVersions.map((v) => ({ ...v, is_current: false }));
+
             await updateMessage(nextMessage.id, {
               content: '',
               sources: [],
               entities: [],
               keywords: [],
+              versions,
               isStreaming: true,
             });
 
@@ -444,7 +593,7 @@ export default function EnhancedChatPage() {
               nextMessage.id
             );
             abortControllerRef.current = abort;
-          } else if (currentSessionId) {
+          } else {
             const streamingMsgId = `msg_${Date.now()}_assistant_streaming`;
             const streamingMessage: Message = {
               id: streamingMsgId,
@@ -470,15 +619,7 @@ export default function EnhancedChatPage() {
         toast.error('操作失败', '无法编辑并重新生成');
       }
     },
-    [
-      messages,
-      updateMessage,
-      addMessage,
-      addMessageVersion,
-      toast,
-      currentSessionId,
-      startStreamingResponse,
-    ]
+    [updateMessage, addMessage, editAndRegenerate, toast, currentSessionId, startStreamingResponse]
   );
 
   const handleDelete = useCallback(
@@ -494,25 +635,17 @@ export default function EnhancedChatPage() {
     [deleteMessage, toast]
   );
 
-  const handleReply = useCallback(
-    (messageId: string) => {
-      const message = messages.find((m) => m.id === messageId);
-      if (message) {
-        setQuotedMessage(message);
+  const handleSyncVersionForGroup = useCallback(
+    (versionGroupId: string, versionIndex: number) => {
+      try {
+        const { syncVersionForGroup } = useChatStore.getState();
+        syncVersionForGroup(versionGroupId, versionIndex);
+      } catch (error) {
+        console.error('Failed to sync version for group:', error);
+        toast.error('同步失败', '无法同步版本组');
       }
     },
-    [messages]
-  );
-
-  const handleShare = useCallback(
-    (messageId: string) => {
-      const message = messages.find((m) => m.id === messageId);
-      if (message) {
-        navigator.clipboard.writeText(message.content);
-        toast.success('已复制', '消息内容已复制，可分享给他人');
-      }
-    },
-    [messages, toast]
+    [toast]
   );
 
   const handleQuestionClick = useCallback(
@@ -542,6 +675,12 @@ export default function EnhancedChatPage() {
   const handleSwitchSession = useCallback(
     async (sid: string) => {
       if (sid === currentSessionId) return;
+
+      // 清空当前图谱数据
+      setCurrentEntities([]);
+      setCurrentKeywords([]);
+      setCurrentRelations([]);
+
       await switchSession(sid);
     },
     [currentSessionId, switchSession]
@@ -569,38 +708,115 @@ export default function EnhancedChatPage() {
 
       let content = '';
       const title = currentSession?.title || '对话导出';
+      const timestamp = new Date()
+        .toLocaleString('zh-CN', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+        .replace(/\//g, '-')
+        .replace(/:/g, '');
+      const filename = `${title}_${timestamp}`;
 
       if (format === 'json') {
-        content = JSON.stringify(
-          {
-            title,
-            exportedAt: new Date().toISOString(),
-            messages: messages.map((m) => ({
-              role: m.role,
-              content: m.content,
-              time: m.created_at,
-            })),
+        const exportData = {
+          title,
+          exportedAt: new Date().toISOString(),
+          metadata: {
+            sessionId: currentSession?.id,
+            messageCount: messages.length,
+            createdAt: currentSession?.created_at,
           },
-          null,
-          2
-        );
+          messages: messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            timestamp: m.created_at,
+            isFavorite: m.is_favorite || false,
+            feedback: m.feedback || null,
+            entities: m.entities || [],
+            sources: m.sources || [],
+          })),
+        };
+        content = JSON.stringify(exportData, null, 2);
       } else if (format === 'md') {
-        content = `# ${title}\n\n导出时间: ${new Date().toLocaleString()}\n\n---\n\n`;
+        content = `# ${title}\n\n`;
+        content += `**导出时间**: ${new Date().toLocaleString('zh-CN')}\n`;
+        content += `**消息数量**: ${messages.length}\n\n`;
+        content += `---\n\n`;
+
         messages.forEach((m) => {
-          content += `### ${m.role === 'user' ? '我' : 'AI助手'}\n\n${m.content}\n\n---\n\n`;
+          const role = m.role === 'user' ? '🧑 我' : '🤖 AI 助手';
+          const time = new Date(m.created_at).toLocaleString('zh-CN', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+
+          content += `## ${role} · ${time}\n\n`;
+          content += `${m.content}\n\n`;
+
+          if (m.entities && m.entities.length > 0) {
+            content += `**实体**: ${m.entities.map((e) => e.name).join(', ')}\n\n`;
+          }
+
+          if (m.sources && m.sources.length > 0) {
+            content += `**参考来源**:\n`;
+            m.sources.forEach((source, idx) => {
+              content += `${idx + 1}. ${source.title}${source.url ? ` - [查看原文](${source.url})` : ''}\n`;
+            });
+            content += `\n`;
+          }
+
+          content += `---\n\n`;
         });
+
+        content += `\n*此文档由智能问答系统自动生成*\n`;
       } else {
-        content = `${title}\n导出时间: ${new Date().toLocaleString()}\n\n`;
+        content = `${'='.repeat(60)}\n`;
+        content += `${title}\n`;
+        content += `${'='.repeat(60)}\n\n`;
+        content += `导出时间：${new Date().toLocaleString('zh-CN')}\n`;
+        content += `消息数量：${messages.length}\n\n`;
+        content += `${'='.repeat(60)}\n\n`;
+
         messages.forEach((m) => {
-          content += `[${m.role === 'user' ? '我' : 'AI助手'}]: ${m.content}\n\n`;
+          const time = new Date(m.created_at).toLocaleString('zh-CN', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+          const role = m.role === 'user' ? '我' : 'AI 助手';
+
+          content += `[${time}] ${role}:\n`;
+          content += `${m.content}\n\n`;
+
+          if (m.is_favorite) {
+            content += `⭐ 已收藏\n\n`;
+          }
+          if (m.feedback === 'helpful') {
+            content += `👍 有帮助\n\n`;
+          }
+          if (m.feedback === 'unclear') {
+            content += `👎 需改进\n\n`;
+          }
+
+          content += `${'-'.repeat(40)}\n\n`;
         });
+
+        content += `\n${'='.repeat(60)}\n`;
+        content += `*此文档由智能问答系统自动生成*\n`;
       }
 
       const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${title}.${format}`;
+      a.download = `${filename}.${format}`;
       a.click();
       URL.revokeObjectURL(url);
       toast.success('导出成功', `对话已导出为${format.toUpperCase()}格式`);
@@ -659,12 +875,15 @@ export default function EnhancedChatPage() {
 
         <div className="flex-1 overflow-y-auto" ref={messagesContainerRef}>
           {messages.length === 0 ? (
-            <WelcomeScreen onQuestionClick={handleQuestionClick} />
+            <WelcomeScreen
+              onQuestionClick={handleQuestionClick}
+              sessionId={currentSessionId || undefined}
+            />
           ) : (
             <div className="max-w-2xl mx-auto px-3 py-4 space-y-3">
               {messages.map((message, index) => (
                 <div key={message.id}>
-                  <EnhancedMessageBubble
+                  <UnifiedMessageBubble
                     message={message}
                     onFeedback={handleFeedback}
                     onFavorite={handleFavorite}
@@ -672,10 +891,9 @@ export default function EnhancedChatPage() {
                     onRegenerate={handleRegenerate}
                     onEdit={handleEdit}
                     onDelete={handleDelete}
-                    onReply={handleReply}
-                    onShare={handleShare}
                     onSwitchVersion={handleSwitchVersion}
                     onEditAndRegenerate={handleEditAndRegenerate}
+                    onSyncVersionForGroup={handleSyncVersionForGroup}
                     isHistorical={!newMessageIds.has(message.id)}
                     isLast={index === messages.length - 1}
                     isStreaming={message.isStreaming === true}
@@ -706,7 +924,7 @@ export default function EnhancedChatPage() {
                 <MessageQuote message={quotedMessage} onRemove={() => setQuotedMessage(null)} />
               </div>
             )}
-            <AdvancedInputArea
+            <UnifiedInputArea
               onSend={handleSendMessage}
               isLoading={isLoading}
               isStreaming={isStreaming}
@@ -742,7 +960,15 @@ export default function EnhancedChatPage() {
         )}
       </div>
 
-      <RightPanel keywords={currentKeywords} onKeywordClick={handleKeywordClick} />
+      <RightPanel
+        keywords={currentKeywords}
+        entities={currentEntities}
+        relations={currentRelations}
+        sessionId={currentSessionId ?? undefined}
+        messageId={messages.length > 0 ? messages[messages.length - 1].id : undefined}
+        onKeywordClick={handleKeywordClick}
+        onLoadSnapshot={handleLoadSnapshot}
+      />
 
       <AnimatePresence>
         {showCommandPalette && (
@@ -789,17 +1015,30 @@ export default function EnhancedChatPage() {
               }
             }}
             onArchive={() => {
-              toast.info('归档功能', '此功能暂未实现');
+              if (currentSessionId) {
+                archiveSession(currentSessionId);
+                toast.success(
+                  currentSession?.is_archived ? '取消归档' : '已归档',
+                  currentSession?.is_archived ? '对话已取消归档' : '对话已归档'
+                );
+                setShowSessionSettings(false);
+              }
             }}
             onDelete={() => {
               handleDeleteSession(currentSessionId!);
               setShowSessionSettings(false);
             }}
-            onAddTag={() => {
-              toast.info('标签功能', '此功能暂未实现');
+            onAddTag={(tag: string) => {
+              if (currentSessionId && tag.trim()) {
+                addTagToSession(currentSessionId, tag.trim());
+                toast.success('添加标签', `已添加标签 "${tag.trim()}"`);
+              }
             }}
-            onRemoveTag={() => {
-              toast.info('标签功能', '此功能暂未实现');
+            onRemoveTag={(tag: string) => {
+              if (currentSessionId) {
+                removeTagFromSession(currentSessionId, tag);
+                toast.success('移除标签', `已移除标签 "${tag}"`);
+              }
             }}
           />
         )}

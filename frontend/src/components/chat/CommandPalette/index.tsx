@@ -3,16 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search,
   MessageSquare,
-  Settings,
   Moon,
   Download,
   Trash2,
   Pin,
   Star,
-  Archive,
-  FolderPlus,
-  Tag,
-  HelpCircle,
   Keyboard,
   FileText,
   Code,
@@ -57,10 +52,6 @@ const defaultCommands: CommandItem[] = [
   { id: 'clear-chat', label: '清空对话', icon: Trash2, shortcut: '⌘⇧D', category: 'action' },
   { id: 'pin-chat', label: '置顶对话', icon: Pin, category: 'action' },
   { id: 'star-message', label: '收藏消息', icon: Star, category: 'action' },
-  { id: 'archive-chat', label: '归档对话', icon: Archive, category: 'action' },
-  { id: 'create-folder', label: '创建文件夹', icon: FolderPlus, category: 'action' },
-  { id: 'add-tag', label: '添加标签', icon: Tag, category: 'action' },
-  { id: 'settings', label: '设置', icon: Settings, shortcut: '⌘,', category: 'settings' },
   {
     id: 'keyboard-shortcuts',
     label: '快捷键',
@@ -68,7 +59,6 @@ const defaultCommands: CommandItem[] = [
     shortcut: '⌘/',
     category: 'settings',
   },
-  { id: 'help', label: '帮助', icon: HelpCircle, shortcut: 'F1', category: 'settings' },
 ];
 
 const inputTemplates = [

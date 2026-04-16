@@ -7,9 +7,10 @@ import uvicorn
 
 from app.core.config import settings
 from app.core.database import init_db
-from app.api.v1 import chat, knowledge, favorite, user  # 添加用户路由
+from app.api.v1 import chat, knowledge, favorite, user, graph
 from app.models import chat as chat_models
 from app.models import knowledge as knowledge_models
+from app.models import graph as graph_models
 
 
 @asynccontextmanager
@@ -43,7 +44,8 @@ app.add_middleware(
 app.include_router(chat.router, tags=["chat"])
 app.include_router(knowledge.router, tags=["knowledge"])
 app.include_router(favorite.router, tags=["favorites"])
-app.include_router(user.router, prefix="/api/v1", tags=["user"])  # 注册用户路由
+app.include_router(user.router, prefix="/api/v1", tags=["user"])
+app.include_router(graph.router, tags=["graph"])
 
 
 @app.get("/")

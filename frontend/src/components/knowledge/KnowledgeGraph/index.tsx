@@ -15,6 +15,7 @@ import {
   RefreshCw,
   X,
   ChevronDown,
+  Layers,
 } from 'lucide-react';
 import { optimizeGraphData, getTopKNodes, getConnectedNodes } from '../../../utils/graphOptimizer';
 import { GraphSkeleton } from '../../common/Skeleton';
@@ -25,6 +26,40 @@ import {
   getCategoryColor,
   getCategoryLabel,
 } from '../../../constants/categories';
+import type { Entity, Relation } from '../../../types/chat';
+
+function convertEntitiesToGraphData(entities: Entity[], relations: Relation[]): GraphData {
+  const nodes = entities.map((entity) => ({
+    id: entity.id,
+    name: entity.name,
+    category: entity.type,
+    symbolSize: Math.max(20, Math.min(50, (entity.relevance || 0.5) * 50)),
+    value: entity.relevance || 0.5,
+    itemStyle: {
+      color: getCategoryColor(entity.type),
+    },
+    description: entity.description,
+    metadata: entity.metadata,
+  }));
+
+  const edges = relations.map((rel) => ({
+    source: rel.source,
+    target: rel.target,
+    relationType: rel.type,
+    value: rel.confidence || 0.5,
+    lineStyle: {
+      width: 2,
+      curveness: 0.3,
+      opacity: 0.6,
+    },
+  }));
+
+  const categories = Object.values(CATEGORY_LABELS).map((label) => ({
+    name: label,
+  }));
+
+  return { nodes, edges, categories };
+}
 
 export default function KnowledgeGraph() {
   const chartRef = useRef<HTMLDivElement>(null);
@@ -32,9 +67,10 @@ export default function KnowledgeGraph() {
   const [rawGraphData, setRawGraphData] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(true);
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
-  const [viewMode] = useState('all');
+  const [viewMode, setViewMode] = useState<'all' | 'top' | 'connected'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [showViewMode, setShowViewMode] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -49,26 +85,50 @@ export default function KnowledgeGraph() {
     let optimized = optimizeGraphData(rawGraphData);
 
     if (selectedCategories.size > 0) {
+      const filteredNodes = optimized.nodes.filter((node) => selectedCategories.has(node.category));
+      const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
+
+      const filteredEdges = optimized.edges.filter(
+        (edge) => filteredNodeIds.has(edge.source) && filteredNodeIds.has(edge.target)
+      );
+
+      const connectedNodeIds = new Set<string>();
+      filteredEdges.forEach((edge) => {
+        connectedNodeIds.add(edge.source);
+        connectedNodeIds.add(edge.target);
+      });
+
+      const nodesWithEdges = filteredNodes.filter((node) => connectedNodeIds.has(node.id));
+
       optimized = {
         ...optimized,
-        nodes: optimized.nodes.filter((node) => selectedCategories.has(node.category)),
-        edges: optimized.edges.filter(
-          (edge) =>
-            optimized.nodes.some((n) => n.id === edge.source) &&
-            optimized.nodes.some((n) => n.id === edge.target)
-        ),
+        nodes: nodesWithEdges,
+        edges: filteredEdges,
       };
     }
 
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
+      const matchedNodes = optimized.nodes.filter((node) =>
+        node.name.toLowerCase().includes(query)
+      );
+      const matchedNodeIds = new Set(matchedNodes.map((n) => n.id));
+
+      const relatedNodeIds = new Set(matchedNodeIds);
+      optimized.edges.forEach((edge) => {
+        if (matchedNodeIds.has(edge.source)) {
+          relatedNodeIds.add(edge.target);
+        }
+        if (matchedNodeIds.has(edge.target)) {
+          relatedNodeIds.add(edge.source);
+        }
+      });
+
       optimized = {
         ...optimized,
-        nodes: optimized.nodes.filter((node) => node.name.toLowerCase().includes(query)),
+        nodes: optimized.nodes.filter((node) => relatedNodeIds.has(node.id)),
         edges: optimized.edges.filter(
-          (edge) =>
-            optimized.nodes.some((n) => n.id === edge.source) &&
-            optimized.nodes.some((n) => n.id === edge.target)
+          (edge) => relatedNodeIds.has(edge.source) && relatedNodeIds.has(edge.target)
         ),
       };
     }
@@ -313,13 +373,24 @@ export default function KnowledgeGraph() {
       setIsFullscreen(!!document.fullscreenElement);
     };
 
+    const handleLoadSnapshot = (event: CustomEvent) => {
+      const { entities, relations } = event.detail;
+      if (entities && entities.length > 0) {
+        const graphData = convertEntitiesToGraphData(entities, relations || []);
+        setRawGraphData(graphData);
+        toast.success('快照已加载', `共 ${graphData.nodes.length} 个节点`);
+      }
+    };
+
     window.addEventListener('resize', handleResize);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
+    window.addEventListener('loadSnapshot', handleLoadSnapshot as any);
     return () => {
       window.removeEventListener('resize', handleResize);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      window.removeEventListener('loadSnapshot', handleLoadSnapshot as any);
     };
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     const observer = new MutationObserver(() => {
@@ -377,6 +448,7 @@ export default function KnowledgeGraph() {
       setHighlightedNodes([]);
       setSearchQuery('');
       setSelectedCategories(new Set());
+      setViewMode('all');
     }
   };
 
@@ -603,6 +675,68 @@ export default function KnowledgeGraph() {
             className={`transition-transform ${showFilters ? 'rotate-180' : ''}`}
           />
         </motion.button>
+
+        <motion.button
+          onClick={() => setShowViewMode(!showViewMode)}
+          className="flex items-center gap-2 px-4 py-3 backdrop-blur-xl rounded-xl transition-all"
+          style={{
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            color: 'var(--color-text-secondary)',
+          }}
+        >
+          <Layers size={18} />
+          <span>视图模式</span>
+          <ChevronDown
+            size={16}
+            className={`transition-transform ${showViewMode ? 'rotate-180' : ''}`}
+          />
+        </motion.button>
+
+        <AnimatePresence>
+          {showViewMode && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="backdrop-blur-xl rounded-xl p-3 overflow-hidden"
+              style={{
+                background: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+              }}
+            >
+              <div className="flex flex-col gap-2">
+                {[
+                  { mode: 'all' as const, label: '全部节点', desc: '显示所有节点' },
+                  { mode: 'top' as const, label: '重要节点', desc: '显示前50个重要节点' },
+                  { mode: 'connected' as const, label: '关联节点', desc: '显示选中节点的关联' },
+                ].map((item) => (
+                  <button
+                    key={item.mode}
+                    onClick={() => {
+                      setViewMode(item.mode);
+                      setShowViewMode(false);
+                    }}
+                    className="px-3 py-2 rounded-lg text-left transition-all"
+                    style={{
+                      background:
+                        viewMode === item.mode
+                          ? 'var(--gradient-primary)'
+                          : 'var(--color-background-tertiary)',
+                      color:
+                        viewMode === item.mode
+                          ? 'var(--color-text-inverse)'
+                          : 'var(--color-text-primary)',
+                    }}
+                  >
+                    <div className="text-sm font-medium">{item.label}</div>
+                    <div className="text-xs opacity-70">{item.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <AnimatePresence>
           {showFilters && (

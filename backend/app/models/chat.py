@@ -26,6 +26,8 @@ class Session(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     message_count = Column(Integer, default=0)
     is_pinned = Column(Boolean, default=False)
+    is_archived = Column(Boolean, default=False)
+    tags = Column(String(1024), default="[]")  # JSON 字符串存储标签列表
 
     messages = relationship("Message", back_populates="session", cascade="all, delete-orphan")
 
@@ -42,6 +44,7 @@ class Message(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     feedback = Column(String(20), nullable=True)
+    is_favorite = Column(Boolean, default=False)
 
     session = relationship("Session", back_populates="messages")
     sources = relationship("MessageSource", back_populates="message", cascade="all, delete-orphan")

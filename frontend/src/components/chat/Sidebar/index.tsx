@@ -21,6 +21,7 @@ import { useChatStore } from '../../../stores/chatStore';
 import { useUIStore, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../../../stores/uiStore';
 import { useResizablePanel } from '../../../hooks/useResizablePanel';
 import { chatDataService } from '../../../services/chat';
+import { useToast } from '../../common/Toast';
 import type { Session } from '../../../types/chat';
 
 interface SidebarProps {
@@ -39,7 +40,9 @@ export default function Sidebar({
   onSelectFavorite,
 }: SidebarProps) {
   const { sidebarCollapsed, toggleSidebar, sidebarWidth, setSidebarWidth } = useUIStore();
-  const { sessions, currentSessionId, pinSession, updateSessionTitle } = useChatStore();
+  const { sessions, currentSessionId, pinSession, updateSessionTitle, batchArchiveSessions } =
+    useChatStore();
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState('sessions');
   const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState<{
@@ -235,20 +238,37 @@ export default function Sidebar({
   };
 
   const handleBatchArchive = async () => {
-    setSelectedSessions(new Set());
-    setIsSelectionMode(false);
+    const ids = Array.from(selectedSessions);
+    if (ids.length === 0) return;
+
+    try {
+      // 使用批量归档方法
+      await batchArchiveSessions(ids, true);
+      toast.success('归档成功', `已归档 ${ids.length} 个会话`);
+    } catch (error) {
+      console.error('Failed to batch archive:', error);
+      toast.error('归档失败', '无法批量归档会话');
+    } finally {
+      setSelectedSessions(new Set());
+      setIsSelectionMode(false);
+    }
   };
 
   const handleBatchDelete = async () => {
     const ids = Array.from(selectedSessions);
     if (ids.length === 0) return;
 
-    for (const id of ids) {
-      // eslint-disable-next-line no-await-in-loop
-      await handleDeleteSession(id);
+    try {
+      // 使用批量删除方法（并行执行）
+      await Promise.all(ids.map((id) => handleDeleteSession(id)));
+      toast.success('删除成功', `已删除 ${ids.length} 个会话`);
+    } catch (error) {
+      console.error('Failed to batch delete:', error);
+      toast.error('删除失败', '无法批量删除会话');
+    } finally {
+      setSelectedSessions(new Set());
+      setIsSelectionMode(false);
     }
-    setSelectedSessions(new Set());
-    setIsSelectionMode(false);
   };
 
   const handleRecentSearchClick = (search: string) => {
@@ -445,13 +465,20 @@ export default function Sidebar({
         initial={false}
         animate={{ width: sidebarCollapsed ? 56 : sidebarWidth }}
         transition={isResizing ? { duration: 0 } : { duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-        className="h-full min-h-0 flex flex-col overflow-hidden relative transition-colors duration-300"
+        className="panel-heritage-bg sidebar-left h-full min-h-0 flex flex-col overflow-hidden relative transition-colors duration-300"
         style={{
           background: 'var(--color-surface)',
           borderRight: '1px solid var(--color-border-light)',
           backdropFilter: 'blur(12px)',
         }}
       >
+        {/* 底部角落装饰 */}
+        {!sidebarCollapsed && (
+          <>
+            <div className="panel-corner-ornament bottom-left" />
+            <div className="panel-corner-ornament bottom-right" />
+          </>
+        )}
         {sidebarCollapsed ? (
           <div className="flex flex-col items-center py-2 gap-2">
             <motion.button
