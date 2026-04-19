@@ -467,47 +467,74 @@ class ChatRepository {
     onComplete: (message: Message) => void,
     onError?: (error: Error) => void
   ): Promise<() => void> {
-    let aborted = false;
+    const userMessage: Message = {
+      id: generateId(),
+      session_id: sessionId,
+      role: 'user',
+      content,
+      created_at: new Date().toISOString(),
+      keywords: extractKeywords(content),
+      entities: extractEntities(content),
+      sources: [],
+    };
+    await this.addMessage(userMessage);
 
-    const processStream = async () => {
+    let isAborted = false;
+
+    (async () => {
       try {
-        const aiContent = generateHeritageResponse(content);
-        const keywords = extractKeywords(content);
-        const entities = extractEntities(content);
-        const sources = generateSources(content);
+        const token = localStorage.getItem('token') || '';
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
 
-        const words = aiContent.split('');
-        for (let i = 0; i < words.length && !aborted; i++) {
-          await new Promise((resolve) => setTimeout(resolve, 30));
-          onChunk(words[i]);
-        }
-
-        if (!aborted) {
-          const aiMessage: Message = {
-            id: `msg_${Date.now()}_assistant`,
+        // 🌟 1. 改为请求后端切实存在的非流式接口
+        const response = await fetch(`http://localhost:8000/api/v1/chat/message`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
             session_id: sessionId,
-            role: 'assistant',
-            content: aiContent,
-            keywords,
-            entities,
-            sources,
-            created_at: new Date().toISOString(),
-          };
+            content: content,
+            message_type: 'text'
+          })
+        });
 
-          onComplete(aiMessage);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+        // 🌟 2. 直接解析完整的 JSON 响应，不再傻乎乎地去等流式数据
+        const result = await response.json();
+        
+        if (!isAborted) {
+          // 为了让界面看起来像是在打字（即使后端是一次性返回的），我们在前端模拟一下打字机效果
+          const fullText = result.content || '';
+          const words = fullText.split('');
+          
+          for (let i = 0; i < words.length && !isAborted; i++) {
+            await new Promise(resolve => setTimeout(resolve, 20)); // 每 20 毫秒吐出一个字
+            onChunk(words[i]);
+          }
+
+          if (!isAborted) {
+            const aiMessage: Message = {
+              id: result.message_id || generateId(),
+              session_id: sessionId,
+              role: 'assistant',
+              content: fullText,
+              created_at: result.created_at || new Date().toISOString(),
+              sources: result.sources || [],
+              entities: result.entities || [],
+              keywords: result.keywords || []
+            };
+            await this.addMessage(aiMessage);
+            onComplete(aiMessage);
+          }
         }
       } catch (error) {
-        if (onError && !aborted) {
-          onError(error instanceof Error ? error : new Error(String(error)));
-        }
+        console.error('🔥 请求失败:', error);
+        if (onError && !isAborted) onError(error as Error);
       }
-    };
+    })();
 
-    processStream();
-
-    return () => {
-      aborted = true;
-    };
+    return () => { isAborted = true; };
   }
 
   async submitFeedback(messageId: string, feedback: 'helpful' | 'unclear'): Promise<void> {

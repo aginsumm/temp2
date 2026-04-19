@@ -41,7 +41,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(chat.router, tags=["chat"])
+app.include_router(chat.router,prefix="/api/v1", tags=["chat"])
 app.include_router(knowledge.router, tags=["knowledge"])
 app.include_router(favorite.router, tags=["favorites"])
 app.include_router(user.router, prefix="/api/v1", tags=["user"])
