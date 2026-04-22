@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+import logging
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List
@@ -9,11 +10,7 @@ from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.core.constants import (
     CATEGORY_CONFIG,
-    CATEGORY_COLORS,
-    CATEGORY_LABELS,
     get_category_color,
-    get_category_label,
-    get_graph_categories,
 )
 from app.services.knowledge_service import KnowledgeService
 from app.services.llm_service import llm_service
@@ -59,6 +56,7 @@ class LLMSearchResponse(BaseModel):
     explanation: Optional[str] = None
 
 router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/entity", response_model=Entity, summary="创建实体")
@@ -248,18 +246,20 @@ async def get_graph_data(
         center_entity_id, max_depth
     )
 
-    categories = get_graph_categories()
+    categories = [
+        {"name": c["value"], "itemStyle": {"color": c["color"]}}
+        for c in CATEGORY_CONFIG
+    ]
 
     nodes = []
     for entity in entities:
-        category_name = get_category_label(entity.type)
         symbol_size = int(20 + entity.importance * 30)
 
         nodes.append(
             GraphNode(
                 id=entity.id,
                 name=entity.name,
-                category=category_name,
+                category=entity.type,
                 symbolSize=symbol_size,
                 value=entity.importance,
                 itemStyle={"color": get_category_color(entity.type)},
@@ -364,11 +364,16 @@ async def llm_intelligent_search(
         logger.warning(f"LLM search failed, using fallback: {e}")
         
         # 使用基础搜索作为降级方案
-        entities = await service.search_entities(
-            query=request.query,
-            entity_types=request.entity_types,
-            top_k=request.top_k,
+        fallback_request = SearchRequest(
+            keyword=request.query,
+            category=request.entity_types[0] if request.entity_types else "all",
+            region=request.regions,
+            period=request.periods,
+            page=1,
+            page_size=request.top_k,
+            sort_by="relevance",
         )
+        entities, _ = await service.search_entities(fallback_request)
         
         search_time_ms = int((time.time() - start_time) * 1000)
         

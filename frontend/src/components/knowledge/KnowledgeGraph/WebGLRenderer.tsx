@@ -117,7 +117,7 @@ export default function WebGLRenderer({
   const chartRef = useRef<echarts.ECharts | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
-  const { setSelectedNode, category, region, period, keyword } = useKnowledgeGraphStore();
+  const { setSelectedNode, category, keyword } = useKnowledgeGraphStore();
   const { resolvedMode } = useThemeStore();
   const toast = useToast();
 
@@ -138,8 +138,6 @@ export default function WebGLRenderer({
       setLoading(true);
       const response = await knowledgeApi.search({
         category: category || undefined,
-        region: region || undefined,
-        period: period || undefined,
         keyword: keyword || undefined,
       });
 
@@ -170,7 +168,11 @@ export default function WebGLRenderer({
     } finally {
       setLoading(false);
     }
-  }, [category, region, period, keyword, toast]);
+  }, [category, keyword, toast]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   useEffect(() => {
     if (!containerRef.current || loading) return;

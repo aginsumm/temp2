@@ -23,7 +23,6 @@ import ConfirmDialog from '../../common/ConfirmDialog';
 import { LoadingOverlay } from '../../common/ProgressBar';
 import type { Entity, Relation, GraphSnapshot } from '../../../types/chat';
 import { useNavigate } from 'react-router-dom';
-import { useChatStore } from '../../../stores/chatStore';
 import { graphSyncService } from '../../../services/graphSyncService';
 
 interface Keyword {
@@ -66,23 +65,9 @@ export default function RightPanel({
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState<number | undefined>(undefined);
 
-  // 从 chatStore 获取图谱数据
-  const storeEntities = useChatStore((state) => state.currentEntities);
-  const storeRelations = useChatStore((state) => state.currentRelations);
-  const storeKeywords = useChatStore((state) => state.currentKeywords);
-
-  // 优先使用 store 数据，如果没有则使用 props 数据
-  const entities = useMemo(() => {
-    return storeEntities.length > 0 ? storeEntities : propEntities || [];
-  }, [storeEntities, propEntities]);
-
-  const relations = useMemo(() => {
-    return storeRelations.length > 0 ? storeRelations : propRelations || [];
-  }, [storeRelations, propRelations]);
-
-  const keywords = useMemo(() => {
-    return storeKeywords.length > 0 ? storeKeywords : propKeywords || [];
-  }, [storeKeywords, propKeywords]);
+  const entities = useMemo(() => propEntities || [], [propEntities]);
+  const relations = useMemo(() => propRelations || [], [propRelations]);
+  const keywords = useMemo(() => propKeywords || [], [propKeywords]);
 
   const toast = useToast();
   const navigate = useNavigate();
@@ -205,8 +190,8 @@ export default function RightPanel({
         onLoadSnapshot(fullSnapshot);
       }
 
-      // 使用 graphSyncService 同步图谱数据到所有模块
-      graphSyncService.updateFromChat(
+      // 使用 snapshot 来源同步图谱数据到所有模块
+      graphSyncService.updateFromSnapshot(
         fullSnapshot.entities,
         fullSnapshot.relations,
         fullSnapshot.keywords,

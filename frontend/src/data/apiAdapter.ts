@@ -10,9 +10,32 @@ interface RequestConfig {
 }
 
 type NetworkStatusListener = (status: NetworkStatus) => void;
+const HEALTH_PATH = '/api/v1/health';
+
+function resolveHealthUrl(baseUrl: string): string {
+  const normalized = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+
+  if (normalized.endsWith(HEALTH_PATH)) {
+    return normalized;
+  }
+
+  if (normalized.endsWith('/api/v1')) {
+    return `${normalized}/health`;
+  }
+
+  if (normalized.includes('/api/v1/')) {
+    return `${normalized.split('/api/v1/')[0]}${HEALTH_PATH}`;
+  }
+
+  if (normalized.includes('/api/v1')) {
+    return `${normalized.split('/api/v1')[0]}${HEALTH_PATH}`;
+  }
+
+  return `${normalized}${HEALTH_PATH}`;
+}
 
 class ApiAdapterManager {
-  private baseUrl: string = 'http://localhost:8000/api/v1';
+  private baseUrl: string = import.meta.env.VITE_API_BASE_URL || '/api/v1';
   private defaultTimeout: number = 30000;
   private connectionMode: ConnectionMode = 'offline';
   private listeners: Set<NetworkStatusListener> = new Set();
@@ -53,7 +76,7 @@ class ApiAdapterManager {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-      const response = await fetch(`${this.baseUrl}/health`, {
+      const response = await fetch(resolveHealthUrl(this.baseUrl), {
         method: 'GET',
         signal: controller.signal,
       });
@@ -117,7 +140,15 @@ class ApiAdapterManager {
     url: string,
     params?: Record<string, string | number | boolean | undefined>
   ): string {
-    const fullUrl = url.startsWith('http') ? url : `${this.baseUrl}${url}`;
+    let fullUrl: string;
+    if (url.startsWith('http')) {
+      fullUrl = url;
+    } else {
+      // 确保 baseUrl 和 url 之间有且仅有一个 /
+      const base = this.baseUrl.endsWith('/') ? this.baseUrl.slice(0, -1) : this.baseUrl;
+      const path = url.startsWith('/') ? url : `/${url}`;
+      fullUrl = `${base}${path}`;
+    }
 
     if (params && Object.keys(params).length > 0) {
       const searchParams = new URLSearchParams();

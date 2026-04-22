@@ -12,7 +12,7 @@ import { entitiesToGraphData as convertEntitiesToGraphData } from '../utils/grap
 import { withRetry } from '../utils/retry';
 import { DataValidator } from '../utils/dataValidator';
 
-const API_BASE = '/api/v1/graph';
+const API_BASE = 'graph';
 
 export interface EntityWithRelations extends Entity {
   relations?: Array<{

@@ -1,9 +1,10 @@
 import { localDatabase, STORES } from '../localDatabase';
 import type { ChatSession, ChatMessage } from '../models';
-import type { Session, Message, Entity, Source } from '../../types/chat';
+import type { Session, Message, Entity, Source, Relation, ChatResponse } from '../../types/chat';
+import { entityExtractor, type ExtractedEntity } from '../../services/entityExtractor';
 
 function generateId(): string {
-  return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 }
 
 function sessionToDb(session: Session): ChatSession {
@@ -44,6 +45,7 @@ function messageToDb(message: Message): ChatMessage {
     sources: message.sources,
     entities: message.entities,
     keywords: message.keywords,
+    relations: message.relations,
     feedback: message.feedback,
     is_favorite: message.is_favorite,
     versions: message.versions,
@@ -63,6 +65,7 @@ function dbToMessage(db: ChatMessage): Message {
     sources: db.sources,
     entities: db.entities,
     keywords: db.keywords,
+    relations: db.relations,
     feedback: db.feedback,
     is_favorite: db.is_favorite,
     versions: db.versions,
@@ -81,18 +84,22 @@ const HERITAGE_RESPONSES = [
 ];
 
 const HERITAGE_KEYWORDS = [
-  '传承', '技艺', '非遗', '传统', '文化',
-  '工艺', '匠心', '民俗', '手艺', '古老',
-  '历史', '艺术', '民间', '国粹', '经典',
+  '传承',
+  '技艺',
+  '非遗',
+  '传统',
+  '文化',
+  '工艺',
+  '匠心',
+  '民俗',
+  '手艺',
+  '古老',
+  '历史',
+  '艺术',
+  '民间',
+  '国粹',
+  '经典',
 ];
-
-const ENTITY_TEMPLATES: Record<string, { type: Entity['type']; description: string }> = {
-  '传承人': { type: 'inheritor', description: '非物质文化遗产传承人' },
-  '技艺': { type: 'technique', description: '传统技艺技法' },
-  '工艺': { type: 'technique', description: '传统制作工艺' },
-  '历史': { type: 'period', description: '历史时期背景' },
-  '保护': { type: 'technique', description: '非遗保护措施' },
-};
 
 const RECOMMENDED_QUESTIONS = [
   { id: 'q1', question: '什么是非物质文化遗产？' },
@@ -142,27 +149,46 @@ function extractKeywords(message: string): string[] {
 }
 
 function extractEntities(message: string): Entity[] {
-  const entities: Entity[] = [];
-  let entityId = 0;
+  const extractedEntities = entityExtractor.extract(message);
 
-  Object.entries(ENTITY_TEMPLATES).forEach(([keyword, template]) => {
-    if (message.includes(keyword)) {
-      entities.push({
-        id: `entity_${++entityId}_${Date.now()}`,
-        name: keyword,
-        type: template.type,
-        description: template.description,
-        relevance: 0.85,
-      });
-    }
-  });
+  return extractedEntities.map((entity: ExtractedEntity) => ({
+    id: `entity_${entity.type}_${entity.startIndex}_${Date.now()}`,
+    name: entity.text,
+    type: mapEntityType(entity.type),
+    description: getEntityDescription(entity.type),
+    relevance: entity.confidence,
+  }));
+}
 
-  return entities.slice(0, 5);
+function mapEntityType(extractedType: string): Entity['type'] {
+  const typeMap: Record<string, Entity['type']> = {
+    person: 'inheritor',
+    organization: 'inheritor',
+    location: 'region',
+    date: 'period',
+    number: 'technique',
+    concept: 'technique',
+    product: 'work',
+  };
+  return typeMap[extractedType] || 'technique';
+}
+
+function getEntityDescription(entityType: string): string {
+  const descriptions: Record<string, string> = {
+    inheritor: '非遗传承人或相关人物',
+    technique: '传统技艺或工艺',
+    work: '非遗相关作品或产品',
+    pattern: '传统图案或纹样',
+    region: '地理位置或区域',
+    period: '历史时期',
+    material: '传统材料或原料',
+  };
+  return descriptions[entityType] || '提取的实体';
 }
 
 function generateSources(message: string): Source[] {
   const sources: Source[] = [];
-  
+
   if (message.includes('传承') || message.includes('技艺')) {
     sources.push({
       id: 'source_1',
@@ -295,7 +321,7 @@ class ChatRepository {
 
   async addMessage(message: Message | Omit<Message, 'id' | 'created_at'>): Promise<Message> {
     const hasId = 'id' in message && message.id !== undefined;
-    
+
     const newMessage: ChatMessage = {
       ...message,
       id: hasId ? message.id : generateId(),
@@ -460,25 +486,15 @@ class ChatRepository {
     return aiMessage;
   }
 
- async sendMessageStream(
+  async sendMessageStream(
     sessionId: string,
     content: string,
     onChunk: (chunk: string) => void,
     onComplete: (message: Message) => void,
     onError?: (error: Error) => void
   ): Promise<() => void> {
-    const userMessage: Message = {
-      id: generateId(),
-      session_id: sessionId,
-      role: 'user',
-      content,
-      created_at: new Date().toISOString(),
-      keywords: [],
-      entities: [],
-      sources: [],
-    };
-    await this.addMessage(userMessage);
     let isAborted = false;
+    const controller = new AbortController();
 
     (async () => {
       try {
@@ -487,14 +503,16 @@ class ChatRepository {
         if (token) headers['Authorization'] = `Bearer ${token}`;
 
         // 🌟 强行请求真实的流式接口
-        const response = await fetch(`http://localhost:8000/api/v1/chat/stream`, {
+        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+        const response = await fetch(`${apiBaseUrl}/chat/stream`, {
           method: 'POST',
           headers,
           body: JSON.stringify({
             session_id: sessionId,
             content: content,
-            message_type: 'text'
-          })
+            message_type: 'text',
+          }),
+          signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -504,58 +522,95 @@ class ChatRepository {
 
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
-        let lastResponse: any = null;
+        let lastResponse: ChatResponse | null = null;
+        let latestEntities: Entity[] = [];
+        let latestKeywords: string[] = [];
+        let latestRelations: Relation[] = [];
+        let fullContent = '';
+        let sseBuffer = '';
 
         if (reader) {
           while (!isAborted) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split('\n');
+            sseBuffer += decoder.decode(value, { stream: true });
+            const events = sseBuffer.split('\n\n');
+            sseBuffer = events.pop() || '';
 
-            for (const line of lines) {
-              const trimmedLine = line.trim();
-              if (trimmedLine && trimmedLine.startsWith('data: ')) {
-                try {
-                  const jsonStr = trimmedLine.substring(6);
-                  if (jsonStr === '[DONE]') continue; 
-                  
-                  const data = JSON.parse(jsonStr);
-                  if (data.type === 'content_chunk' || data.type === 'content') {
-                    onChunk(data.content);
-                  } else if (data.type === 'complete') {
-                    lastResponse = data.response || data;
-                  }
-                } catch (e) {
-                  // 忽略不完整的 JSON 块解析错误
+            for (const rawEvent of events) {
+              const dataLines = rawEvent
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line.startsWith('data:'))
+                .map((line) => line.replace(/^data:\s?/, ''));
+
+              if (dataLines.length === 0) continue;
+              const payload = dataLines.join('\n');
+              if (payload === '[DONE]') continue;
+
+              try {
+                const data = JSON.parse(payload);
+                if (data.type === 'content_chunk' || data.type === 'content') {
+                  const chunkText = String(data.content || '');
+                  fullContent += chunkText;
+                  onChunk(chunkText);
+                } else if (data.type === 'entities') {
+                  latestEntities = Array.isArray(data.entities) ? data.entities : [];
+                } else if (data.type === 'keywords') {
+                  latestKeywords = Array.isArray(data.keywords) ? data.keywords : [];
+                } else if (data.type === 'relations') {
+                  latestRelations = Array.isArray(data.relations) ? data.relations : [];
+                } else if (data.type === 'complete') {
+                  lastResponse = data.response || data;
                 }
+              } catch {
+                // 忽略不完整事件，等待后续分片
               }
             }
           }
         }
 
+        if (!lastResponse && fullContent.trim()) {
+          const responseId = generateId();
+          lastResponse = {
+            message_id: responseId,
+            content: fullContent,
+            entities: latestEntities,
+            keywords: latestKeywords,
+            relations: latestRelations,
+            sources: [],
+            created_at: new Date().toISOString(),
+            role: 'assistant',
+          };
+        }
+
         if (lastResponse && !isAborted) {
           const aiMessage: Message = {
-            id: lastResponse.message_id || lastResponse.id || generateId(),
+            id: lastResponse.message_id || generateId(),
             session_id: sessionId,
             role: 'assistant',
-            content: lastResponse.content || '',
+            content: lastResponse.content || fullContent || '',
             created_at: lastResponse.created_at || new Date().toISOString(),
             sources: lastResponse.sources || [],
-            entities: lastResponse.entities || [],
-            keywords: lastResponse.keywords || []
+            entities: lastResponse.entities || latestEntities || [],
+            keywords: lastResponse.keywords || latestKeywords || [],
+            relations: lastResponse.relations || latestRelations || [],
           };
           await this.addMessage(aiMessage);
           onComplete(aiMessage);
         }
       } catch (error) {
+        if (isAborted) return;
         console.error('🔥 真实流式请求彻底报错:', error);
-        if (onError && !isAborted) onError(error as Error);
+        if (onError) onError(error as Error);
       }
     })();
 
-    return () => { isAborted = true; };
+    return () => {
+      isAborted = true;
+      controller.abort();
+    };
   }
   async submitFeedback(messageId: string, feedback: 'helpful' | 'unclear'): Promise<void> {
     await this.updateMessage(messageId, { feedback });

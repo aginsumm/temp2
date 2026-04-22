@@ -19,15 +19,14 @@ import type {
 import Sidebar from '../../components/chat/Sidebar';
 import RightPanel from '../../components/chat/RightPanel';
 import UnifiedInputArea from '../../components/chat/UnifiedInputArea';
-import UnifiedMessageBubble from '../../components/chat/UnifiedMessageBubble';
 import ChatToolbar from '../../components/chat/ChatToolbar';
 import CommandPalette from '../../components/chat/CommandPalette';
 import WelcomeScreen from '../../components/chat/WelcomeScreen';
 import MessageSearch from '../../components/chat/MessageSearch';
 import SessionSettings from '../../components/chat/SessionSettings';
 import KeyboardShortcuts from '../../components/chat/KeyboardShortcuts';
-import { TypingIndicator } from '../../components/chat/TypingIndicator';
 import { MessageQuote } from '../../components/chat/MessageQuote';
+import { VirtualMessageList } from '../../components/common/VirtualMessageList';
 import { useThemeStore } from '../../stores/themeStore';
 
 export default function EnhancedChatPage() {
@@ -35,9 +34,6 @@ export default function EnhancedChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<(() => void) | null>(null);
-  const [currentKeywords, setCurrentKeywords] = useState<string[]>([]);
-  const [currentEntities, setCurrentEntities] = useState<Entity[]>([]);
-  const [currentRelations, setCurrentRelations] = useState<Relation[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
   const [newMessageIds, setNewMessageIds] = useState(new Set<string>());
   const [quotedMessage, setQuotedMessage] = useState<Message | null>(null);
@@ -83,6 +79,9 @@ export default function EnhancedChatPage() {
   const { toggleMode } = useThemeStore();
 
   const currentSession = sessions.find((s) => s.id === currentSessionId);
+  const graphEntities = useGraphStore((state) => state.entities);
+  const graphRelations = useGraphStore((state) => state.relations);
+  const graphKeywords = useGraphStore((state) => state.keywords);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -155,9 +154,13 @@ export default function EnhancedChatPage() {
               const { entities, relations, keywords, filters } = JSON.parse(savedGraphState);
 
               if (entities && entities.length > 0) {
-                setCurrentEntities(entities);
-                if (keywords) setCurrentKeywords(keywords);
-                if (relations) setCurrentRelations(relations);
+                graphSyncService.updateFromSnapshot(
+                  entities,
+                  relations || [],
+                  keywords || [],
+                  targetSessionId,
+                  undefined
+                );
 
                 // 触发全局事件通知其他组件
                 const event = new CustomEvent('restoreGraphState', {
@@ -199,12 +202,16 @@ export default function EnhancedChatPage() {
     if (messages.length > 0) {
       const lastMessage = messages[messages.length - 1];
       if (lastMessage.role === 'assistant' && lastMessage.entities) {
-        setCurrentEntities(lastMessage.entities);
-        if (lastMessage.keywords) setCurrentKeywords(lastMessage.keywords);
-        if (lastMessage.relations) setCurrentRelations(lastMessage.relations);
+        graphSyncService.updateFromChat(
+          lastMessage.entities,
+          lastMessage.relations || [],
+          lastMessage.keywords || [],
+          currentSessionId || undefined,
+          lastMessage.id
+        );
       }
     }
-  }, [messages]);
+  }, [messages, currentSessionId]);
 
   useEffect(() => {
     const container = messagesContainerRef.current;
@@ -293,54 +300,32 @@ export default function EnhancedChatPage() {
   // ========== 辅助函数：更新图谱数据 ==========
   const updateGraphData = useCallback(
     (entities?: Entity[], keywords?: string[], sources?: Source[], relations?: Relation[]) => {
-      if (entities) setCurrentEntities(entities);
-      if (keywords) setCurrentKeywords(keywords);
-      if (relations) setCurrentRelations(relations);
-
-      // 同时更新 chatStore 中的图谱数据
-      useChatStore.getState().updateGraphData(entities, relations, keywords);
-
-      // 使用 graphSyncService 更新图谱数据，确保知识图谱板块也能收到数据
       if (entities && entities.length > 0) {
         graphSyncService.updateFromChat(
           entities,
           relations || [],
           keywords || [],
-          sessionId,
+          currentSessionId || undefined,
           undefined
         );
       }
 
       console.debug('Graph data updated:', { entities, keywords, sources, relations });
     },
-    [sessionId]
+    [currentSessionId]
   );
 
   // ========== 辅助函数：加载快照 ==========
   const handleLoadSnapshot = useCallback(
     (snapshot: GraphSnapshot) => {
       // 更新所有图谱数据
-      if (snapshot.entities && snapshot.entities.length > 0) {
-        setCurrentEntities(snapshot.entities);
-      }
-      if (snapshot.keywords && snapshot.keywords.length > 0) {
-        setCurrentKeywords(snapshot.keywords);
-      }
-      if (snapshot.relations && snapshot.relations.length > 0) {
-        setCurrentRelations(snapshot.relations);
-      }
-
-      // 更新统一的 graphStore
-      useGraphStore
-        .getState()
-        .updateGraphData(
-          snapshot.entities,
-          snapshot.relations,
-          snapshot.keywords,
-          snapshot.session_id,
-          snapshot.message_id,
-          'snapshot'
-        );
+      graphSyncService.updateFromSnapshot(
+        snapshot.entities || [],
+        snapshot.relations || [],
+        snapshot.keywords || [],
+        snapshot.session_id,
+        snapshot.message_id
+      );
 
       // 通过全局事件通知其他组件（如知识图谱）
       const event = new CustomEvent('loadSnapshot', {
@@ -738,9 +723,7 @@ export default function EnhancedChatPage() {
       if (sid === currentSessionId) return;
 
       // 清空当前图谱数据
-      setCurrentEntities([]);
-      setCurrentKeywords([]);
-      setCurrentRelations([]);
+      useGraphStore.getState().clearGraphData();
 
       await switchSession(sid);
     },
@@ -941,34 +924,22 @@ export default function EnhancedChatPage() {
               sessionId={currentSessionId || undefined}
             />
           ) : (
-            <div className="max-w-2xl mx-auto px-3 py-4 space-y-3">
-              {messages.map((message, index) => (
-                <div key={message.id}>
-                  <UnifiedMessageBubble
-                    message={message}
-                    onFeedback={handleFeedback}
-                    onFavorite={handleFavorite}
-                    onCopy={handleCopy}
-                    onRegenerate={handleRegenerate}
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                    onSwitchVersion={handleSwitchVersion}
-                    onEditAndRegenerate={handleEditAndRegenerate}
-                    onSyncVersionForGroup={handleSyncVersionForGroup}
-                    isHistorical={!newMessageIds.has(message.id)}
-                    isLast={index === messages.length - 1}
-                    isStreaming={message.isStreaming === true}
-                  />
-                </div>
-              ))}
-
-              {isLoading &&
-                messages.length > 0 &&
-                messages[messages.length - 1]?.role === 'user' &&
-                !streamingContent && <TypingIndicator message="正在思考..." />}
-
-              <div ref={messagesEndRef} />
-            </div>
+            <VirtualMessageList
+              messages={messages}
+              isLoading={isLoading}
+              streamingContent={streamingContent}
+              newMessageIds={newMessageIds}
+              onFeedback={handleFeedback}
+              onFavorite={handleFavorite}
+              onCopy={handleCopy}
+              onRegenerate={handleRegenerate}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
+              onSwitchVersion={handleSwitchVersion}
+              onEditAndRegenerate={handleEditAndRegenerate}
+              onSyncVersionForGroup={handleSyncVersionForGroup}
+              messagesEndRef={messagesEndRef}
+            />
           )}
         </div>
 
@@ -1022,9 +993,9 @@ export default function EnhancedChatPage() {
       </div>
 
       <RightPanel
-        keywords={currentKeywords}
-        entities={currentEntities}
-        relations={currentRelations}
+        keywords={graphKeywords}
+        entities={graphEntities}
+        relations={graphRelations}
         sessionId={currentSessionId ?? undefined}
         messageId={messages.length > 0 ? messages[messages.length - 1].id : undefined}
         onKeywordClick={handleKeywordClick}

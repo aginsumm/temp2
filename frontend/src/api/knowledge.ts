@@ -4,7 +4,7 @@ import { Entity as ChatEntity } from '../types/chat';
 import type { KnowledgeEntityFull } from '../data/models';
 import { withRetry } from '../utils/retry';
 
-const API_BASE = '/api/v1/knowledge';
+const API_BASE = 'knowledge';
 
 export interface Entity extends ChatEntity {
   region?: string;

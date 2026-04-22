@@ -99,11 +99,13 @@ export default function KnowledgePage() {
           return;
         }
 
-        // 使用 graphSyncService 更新图谱数据，确保同步到所有模块
-        graphSyncService.updateFromKnowledge(
+        // 使用 snapshot 来源同步，确保知识图谱页面会按快照逻辑更新
+        graphSyncService.updateFromSnapshot(
           fullSnapshot.entities,
           fullSnapshot.relations,
-          fullSnapshot.keywords
+          fullSnapshot.keywords,
+          fullSnapshot.session_id,
+          fullSnapshot.message_id
         );
 
         toast.success('加载成功', `已加载快照 "${fullSnapshot.title || '未命名'}"`);
@@ -174,6 +176,7 @@ export default function KnowledgePage() {
 
   return (
     <div
+      data-testid="knowledge-page-root"
       className="h-[calc(100vh-4rem)] min-h-0 relative overflow-hidden flex flex-col"
       style={{ background: 'var(--gradient-background)' }}
     >
@@ -197,11 +200,11 @@ export default function KnowledgePage() {
         />
       </div>
 
-      <div className="relative z-10 container mx-auto px-4 py-6 flex flex-col flex-1 min-h-0">
+      <div className="relative z-10 container mx-auto px-4 py-6 flex flex-col h-full min-h-0">
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-4"
+          className="mb-4 flex-shrink-0"
         >
           <div>
             <motion.h1

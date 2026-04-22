@@ -12,16 +12,19 @@ import { useToast } from '../../common/Toast';
 import { graphService } from '../../../api/graph';
 import { graphSyncService } from '../../../services/graphSyncService';
 import { getCategoryColor, getCategoryLabel } from '../../../constants/categories';
-import type { Entity } from '../../../types/chat';
+import type { Entity, RelationType } from '../../../types/chat';
 
 export default function KnowledgeGraph() {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
+  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryCountRef = useRef(0);
   const [rawGraphData, setRawGraphData] = useState<KnowledgeGraphData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [retryCount, setRetryCount] = useState(0);
+  const [, setIsFullscreen] = useState(false);
 
   const { selectedNode, highlightedNodes, layoutType, setSelectedNode, setHighlightedNodes } =
     useKnowledgeGraphStore();
@@ -133,14 +136,12 @@ export default function KnowledgeGraph() {
             const isSelected = selectedNode === node.id;
             const isHighlighted = highlightedNodes.includes(node.id);
             const color = getCategoryColor(node.category);
+            const normalizedValue = Math.max(0, Math.min(1, node.value || 0.5));
 
             return {
               ...node,
-              symbolSize: (value: number) => {
-                // 根据节点值动态调整大小，范围 15-45（更紧凑适宜）
-                const normalizedValue = Math.max(0, Math.min(1, value || 0.5));
-                return 15 + normalizedValue * 30;
-              },
+              // 根据节点值动态调整大小，范围 15-45（更紧凑适宜）
+              symbolSize: 15 + normalizedValue * 30,
               itemStyle: {
                 ...node.itemStyle,
                 color: color,
@@ -272,10 +273,14 @@ export default function KnowledgeGraph() {
 
   const renderGraphRef = useRef(renderGraph);
   renderGraphRef.current = renderGraph;
+  retryCountRef.current = retryCount;
 
   useEffect(() => {
     loadGraphData();
     return () => {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
       if (chartInstance.current) {
         chartInstance.current.dispose();
       }
@@ -293,9 +298,36 @@ export default function KnowledgeGraph() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graphData, layoutType, selectedNode, highlightedNodes]);
 
+  useEffect(() => {
+    if (!chartRef.current) return;
+
+    const observer = new ResizeObserver(() => {
+      if (!chartRef.current) return;
+      const { clientWidth, clientHeight } = chartRef.current;
+      if (clientWidth <= 0 || clientHeight <= 0) return;
+
+      if (!chartInstance.current && graphData) {
+        chartInstance.current = echarts.init(chartRef.current);
+        renderGraphRef.current();
+        return;
+      }
+
+      if (chartInstance.current) {
+        chartInstance.current.resize();
+      }
+    });
+
+    observer.observe(chartRef.current);
+    return () => observer.disconnect();
+  }, [graphData]);
+
   // 监听 graphStore 变化，自动更新图谱
   useEffect(() => {
-    if (graphStoreEntities.length > 0) {
+    // 只在 graphStore 数据来源是 chat 或 snapshot 时才更新，避免覆盖当前页面加载的数据
+    if (
+      graphStoreEntities.length > 0 &&
+      (graphStoreSource === 'chat' || graphStoreSource === 'snapshot')
+    ) {
       const chatGraphData = graphService.entitiesToGraphData(
         graphStoreEntities,
         graphStoreRelations
@@ -323,14 +355,10 @@ export default function KnowledgeGraph() {
         })),
       };
       setRawGraphData(knowledgeGraphData);
-      // 只在来源变化时显示提示，避免重复显示
-      if (graphStoreSource === 'chat' || graphStoreSource === 'snapshot') {
-        // 使用函数形式，避免依赖 toast 对象
-        toast.info(
-          '图谱已更新',
-          `来自${graphStoreSource === 'chat' ? '智能问答' : '快照'}的 ${chatGraphData.nodes.length} 个节点`
-        );
-      }
+      toast.info(
+        '图谱已更新',
+        `来自${graphStoreSource === 'chat' ? '智能问答' : '快照'}的 ${chatGraphData.nodes.length} 个节点`
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graphStoreEntities, graphStoreRelations, graphStoreSource]);
@@ -394,7 +422,15 @@ export default function KnowledgeGraph() {
         metadata: node.metadata as Entity['metadata'],
       }));
 
-      graphSyncService.updateFromKnowledge(entities, [], []);
+      const relations = (data.edges || []).map((edge, index) => ({
+        id: `knowledge_edge_${index}`,
+        source: edge.source,
+        target: edge.target,
+        type: (edge.relationType || 'related_to') as RelationType,
+        confidence: Number(edge.value ?? edge.weight ?? 0.5),
+      }));
+
+      graphSyncService.updateFromKnowledge(entities, relations, []);
 
       toast.success('知识图谱加载成功', `共 ${data.nodes.length} 个节点`);
     } catch (error) {
@@ -402,10 +438,11 @@ export default function KnowledgeGraph() {
       console.error('加载图谱数据失败:', error);
       setError(errorMessage);
 
-      if (retryCount < 3) {
-        toast.warning('加载失败', `正在重试 (${retryCount + 1}/3)`);
+      if (retryCountRef.current < 3) {
+        const nextRetry = retryCountRef.current + 1;
+        toast.warning('加载失败', `正在重试 (${nextRetry}/3)`);
         setRetryCount((prev) => prev + 1);
-        setTimeout(() => loadGraphData(), 1000 * (retryCount + 1));
+        retryTimeoutRef.current = setTimeout(() => loadGraphData(), 1000 * nextRetry);
       } else {
         toast.error('加载失败', '无法加载知识图谱数据');
       }

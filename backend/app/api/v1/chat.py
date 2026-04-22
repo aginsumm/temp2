@@ -2,13 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
-import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from app.core.database import get_db
-from app.core.auth import get_current_user, get_optional_user
+from app.core.auth import get_current_user, get_current_or_guest
 from app.schemas.chat import (
     ChatMessageRequest,
     ChatMessageResponse,
@@ -23,7 +22,8 @@ from app.schemas.chat import (
     RecommendedQuestion,
     Source,
     Entity,
-    EntityType,
+    Relation,
+    RelationType,
 )
 from app.services.chat_service import SessionService, MessageService
 from app.services.llm_service import llm_service
@@ -133,11 +133,40 @@ class ChatError(Exception):
         super().__init__(message)
 
 
+@router.get("/health")
+async def health_check():
+    """LLM服务健康检查端点"""
+    try:
+        state = llm_service.state.value
+        is_healthy = state == "healthy"
+        
+        response = {
+            "status": "healthy" if is_healthy else "degraded",
+            "llm_state": state,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "error_counts": llm_service.error_counts,
+            "is_degraded": llm_service.is_degraded,
+        }
+        
+        if llm_service.last_health_check:
+            response["last_health_check"] = llm_service.last_health_check.isoformat()
+            
+        return response
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        return {
+            "status": "error",
+            "llm_state": "unknown",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "error": str(e)
+        }
+
+
 @router.post("/chat/message", response_model=ChatMessageResponse)
 async def send_message(
     request: ChatMessageRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user),
+    _user_id: str = Depends(get_current_or_guest),
 ):
     session_service = SessionService(db)
     message_service = MessageService(db)
@@ -147,23 +176,16 @@ async def send_message(
         if not session:
             raise HTTPException(status_code=404, detail="会话不存在")
 
-        user_message = await message_service.create_message(
+        await message_service.create_message(
             session_id=request.session_id,
             content=request.content,
             role=MessageRole.user,
         )
 
-        try:
-            ai_response = await llm_service.chat(request.content)
-            entities = await llm_service.extract_entities(ai_response)
-            keywords = await llm_service.extract_keywords(ai_response)
-            relations = await llm_service.extract_relations(ai_response, entities)
-        except Exception as llm_error:
-            logger.warning(f"LLM service error, using fallback: {llm_error}")
-            ai_response = generate_fallback_response(request.content)
-            entities = [Entity(**e) for e in extract_fallback_entities(ai_response)]
-            keywords = extract_fallback_keywords(ai_response)
-            relations = []
+        ai_response = await llm_service.chat(request.content)
+        entities = await llm_service.extract_entities(ai_response)
+        keywords = await llm_service.extract_keywords(ai_response)
+        relations = await llm_service.extract_relations(ai_response, entities)
 
         sources = [Source(**s) for s in MOCK_SOURCES]
 
@@ -198,7 +220,7 @@ async def send_message(
 async def send_message_stream(
     request: ChatMessageRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user),
+    user_id: str = Depends(get_current_or_guest),
 ):
     session_service = SessionService(db)
     message_service = MessageService(db)
@@ -206,25 +228,25 @@ async def send_message_stream(
     try:
         session = await session_service.get_session(request.session_id)
         if not session:
-            # 🚨 给流式接口也加上自动创建会话的补丁
             print(f"⚠️ 流式接口发现未知的会话 ID: {request.session_id}，正在自动创建...")
             from app.models.chat import Session
             new_session = Session(
                 id=request.session_id,
                 user_id=user_id,
                 title="新对话",
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
             )
             db.add(new_session)
             await db.flush()
             session = new_session
 
-        user_message = await message_service.create_message(
-            session_id=request.session_id,
-            content=request.content,
-            role=MessageRole.user,
-        )
+        if request.resume_from is None:
+            await message_service.create_message(
+                session_id=request.session_id,
+                content=request.content,
+                role=MessageRole.user,
+            )
     except HTTPException:
         raise
     except Exception as e:
@@ -234,49 +256,25 @@ async def send_message_stream(
     async def generate():
         full_content = ""
         accumulated_length = 0
-        use_fallback = False
         
         try:
-            try:
-                async for chunk in llm_service.chat_stream(request.content):
-                    full_content += chunk
-                    accumulated_length += len(chunk)
-                    
-                    data = json.dumps({
-                        "type": "content_chunk",
-                        "content": chunk,
-                        "accumulated_length": accumulated_length
-                    }, ensure_ascii=False)
-                    yield f"data: {data}\n\n"
-            except Exception as llm_error:
-                logger.warning(f"LLM stream error, using fallback: {llm_error}")
-                use_fallback = True
-                full_content = generate_fallback_response(request.content)
+            if request.resume_from is not None:
+                yield f"data: {json.dumps({'type': 'resume', 'offset': request.resume_from}, ensure_ascii=False)}\n\n"
+            
+            async for chunk in llm_service.chat_stream(request.content):
+                full_content += chunk
+                accumulated_length += len(chunk)
                 
-                for char in full_content:
-                    accumulated_length += 1
-                    data = json.dumps({
-                        "type": "content_chunk",
-                        "content": char,
-                        "accumulated_length": accumulated_length
-                    }, ensure_ascii=False)
-                    yield f"data: {data}\n\n"
-                    await asyncio.sleep(STREAM_CHUNK_DELAY)
+                data = json.dumps({
+                    "type": "content_chunk",
+                    "content": chunk,
+                    "accumulated_length": accumulated_length
+                }, ensure_ascii=False)
+                yield f"data: {data}\n\n"
 
-            try:
-                if use_fallback:
-                    entities = [Entity(**e) for e in extract_fallback_entities(full_content)]
-                    keywords = extract_fallback_keywords(full_content)
-                    relations = []
-                else:
-                    entities = await llm_service.extract_entities(full_content)
-                    keywords = await llm_service.extract_keywords(full_content)
-                    relations = await llm_service.extract_relations(full_content, entities)
-            except Exception as extract_error:
-                logger.warning(f"Entity extraction error: {extract_error}")
-                entities = [Entity(**e) for e in extract_fallback_entities(full_content)]
-                keywords = extract_fallback_keywords(full_content)
-                relations = []
+            entities = await llm_service.extract_entities(full_content)
+            keywords = await llm_service.extract_keywords(full_content)
+            relations = await llm_service.extract_relations(full_content, entities)
 
             if entities:
                 entities_data = json.dumps({
@@ -346,9 +344,7 @@ async def send_message_stream(
 
 
 @router.get("/chat/recommendations")
-async def get_recommendations(
-    session_id: Optional[str] = Query(None),
-):
+async def get_recommendations():
     questions = [
         RecommendedQuestion(id="1", question="什么是非物质文化遗产？"),
         RecommendedQuestion(id="2", question="如何成为非遗传承人？"),
@@ -504,8 +500,16 @@ async def get_session_messages(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
 ):
     try:
+        session_service = SessionService(db)
+        session = await session_service.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        if session.user_id != user_id:
+            raise HTTPException(status_code=403, detail="无权访问该会话消息")
+
         message_service = MessageService(db)
         messages, total, has_more = await message_service.get_session_messages(
             session_id, page, page_size
@@ -530,9 +534,41 @@ async def get_session_messages(
                     name=e.name,
                     type=e.type,
                     description=e.description,
+                    relevance=(e.relevance / 100.0) if e.relevance is not None else None,
                 )
                 for e in msg.entities
             ]
+            relations = []
+            for r in msg.relations:
+                relation_type_raw = r.relation_type or "related_to"
+                try:
+                    relation_type = RelationType(relation_type_raw)
+                except ValueError:
+                    relation_type = RelationType.related_to
+
+                relations.append(
+                    Relation(
+                        id=r.id,
+                        source=r.source_entity,
+                        target=r.target_entity,
+                        type=relation_type,
+                        confidence=(r.confidence / 100.0) if r.confidence is not None else 0.8,
+                        evidence=r.evidence,
+                        bidirectional=bool(r.bidirectional),
+                    )
+                )
+
+            keywords = []
+            if msg.keywords:
+                if isinstance(msg.keywords, str):
+                    try:
+                        parsed = json.loads(msg.keywords)
+                        if isinstance(parsed, list):
+                            keywords = [k for k in parsed if isinstance(k, str)]
+                    except json.JSONDecodeError:
+                        keywords = []
+                elif isinstance(msg.keywords, list):
+                    keywords = [k for k in msg.keywords if isinstance(k, str)]
             message_schemas.append(
                 MessageSchema(
                     id=msg.id,
@@ -542,6 +578,8 @@ async def get_session_messages(
                     created_at=msg.created_at,
                     sources=sources,
                     entities=entities,
+                    relations=relations,
+                    keywords=keywords,
                     feedback=msg.feedback,
                     is_favorite=msg.is_favorite,
                 )

@@ -41,12 +41,39 @@ type ConnectionListener = (state: ConnectionState) => void;
 
 const DEFAULT_CONFIG: ConnectionConfig = {
   healthCheckInterval: 30000,
-  healthCheckEndpoint: '/health',
+  healthCheckEndpoint: '/',
   maxReconnectAttempts: 10,
   reconnectBaseDelay: 1000,
   reconnectMaxDelay: 30000,
   offlineQueueSize: 50,
 };
+const HEALTH_PATH = '/api/v1/health';
+
+function resolveHealthCheckUrl(rawBase: string): string {
+  const normalized = rawBase.endsWith('/') ? rawBase.slice(0, -1) : rawBase;
+
+  if (normalized.endsWith(HEALTH_PATH)) {
+    return normalized;
+  }
+
+  if (normalized.endsWith('/api/v1')) {
+    return `${normalized}/health`;
+  }
+
+  if (normalized.includes('/api/v1/')) {
+    return `${normalized.split('/api/v1/')[0]}${HEALTH_PATH}`;
+  }
+
+  if (normalized.includes('/api/v1')) {
+    return `${normalized.split('/api/v1')[0]}${HEALTH_PATH}`;
+  }
+
+  return `${normalized}${HEALTH_PATH}`;
+}
+
+const HEALTH_CHECK_BASE_URL = resolveHealthCheckUrl(
+  import.meta.env.VITE_HEALTH_CHECK_URL || 'http://localhost:8000'
+);
 
 class OfflineQueue {
   private queue: QueuedRequest[] = [];
@@ -353,8 +380,6 @@ class ConnectionManager {
     }
   }
 }
-
-const HEALTH_CHECK_BASE_URL = import.meta.env.VITE_HEALTH_CHECK_URL || '';
 
 export const connectionManager = new ConnectionManager(HEALTH_CHECK_BASE_URL);
 

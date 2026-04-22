@@ -2,8 +2,7 @@ from sqlalchemy import Column, String, Integer, Float, Text, DateTime, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 import uuid
-
-Base = declarative_base()
+from app.core.database import Base
 
 
 class Entity(Base):

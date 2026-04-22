@@ -84,6 +84,14 @@ interface ChatState {
   setCurrentKeywords: (keywords: string[]) => void;
   updateGraphData: (entities?: Entity[], relations?: Relation[], keywords?: string[]) => void;
   clearGraphData: () => void;
+
+  // 消息批量操作方法
+  batchDeleteMessages: (messageIds: string[]) => Promise<void>;
+  batchFavoriteMessages: (messageIds: string[], favorite: boolean) => Promise<void>;
+  batchExportMessages: (
+    messageIds: string[],
+    format: 'json' | 'txt' | 'md'
+  ) => Promise<{ success: boolean; count: number }>;
 }
 
 const pruneMessages = (messages: Message[]): Message[] => {
@@ -91,29 +99,35 @@ const pruneMessages = (messages: Message[]): Message[] => {
   return messages.slice(-MAX_MESSAGES_PER_SESSION);
 };
 
-export const pruneVersions = (versions: MessageVersion[]): MessageVersion[] => {
-  if (versions.length <= MAX_MESSAGE_VERSIONS) return versions;
+export const pruneVersions = (
+  versions: MessageVersion[],
+  maxVersions: number = MAX_MESSAGE_VERSIONS
+): MessageVersion[] => {
+  if (versions.length <= maxVersions) return versions;
 
-  // 按创建时间排序，确保保留最早和最晚的版本
   const sortedVersions = [...versions].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
 
-  const currentVersion = sortedVersions.find((v) => v.is_current);
-  // 保留最早的 2 个版本和最新的几个版本，确保当前版本始终存在
-  const earliestVersions = sortedVersions.slice(0, 2);
-  const latestVersions = sortedVersions.slice(-(MAX_MESSAGE_VERSIONS - 2));
+  const currentVersionIndex = sortedVersions.findIndex((v) => v.is_current);
+  const currentVersion = currentVersionIndex !== -1 ? sortedVersions[currentVersionIndex] : null;
 
-  // 合并并去重，确保当前版本在列表中
-  const uniqueVersions = Array.from(
-    new Map([...earliestVersions, ...latestVersions].map((v) => [v.id, v])).values()
-  );
+  const earliestCount = Math.min(2, maxVersions - 2);
+  const latestCount = maxVersions - earliestCount;
 
-  if (currentVersion && !uniqueVersions.find((v) => v.id === currentVersion.id)) {
-    uniqueVersions.push(currentVersion);
+  const earliestVersions = sortedVersions.slice(0, earliestCount);
+  const latestVersions = sortedVersions.slice(-latestCount);
+
+  const versionMap = new Map<string, MessageVersion>();
+
+  earliestVersions.forEach((v) => versionMap.set(v.id, v));
+  latestVersions.forEach((v) => versionMap.set(v.id, v));
+
+  if (currentVersion && !versionMap.has(currentVersion.id)) {
+    versionMap.set(currentVersion.id, currentVersion);
   }
 
-  return uniqueVersions.sort(
+  return Array.from(versionMap.values()).sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
 };
@@ -1086,6 +1100,130 @@ export const useChatStore = create<ChatState>()(
 
       clearGraphData: () => {
         set({ currentEntities: [], currentRelations: [], currentKeywords: [] });
+      },
+
+      // 消息批量操作方法
+      batchDeleteMessages: async (messageIds: string[]) => {
+        const messagesToDelete: { id: string; sessionId: string }[] = [];
+
+        for (const id of messageIds) {
+          const message = await chatRepository.getMessage(id);
+          if (message) {
+            messagesToDelete.push({ id, sessionId: message.session_id });
+          }
+        }
+
+        for (const { id } of messagesToDelete) {
+          await chatRepository.deleteMessage(id);
+        }
+
+        set((state) => {
+          const newMessagesBySession = { ...state.messagesBySession };
+          const sessionUpdates: Record<string, number> = {};
+
+          for (const { id, sessionId } of messagesToDelete) {
+            if (!newMessagesBySession[sessionId]) continue;
+
+            newMessagesBySession[sessionId] = newMessagesBySession[sessionId].filter(
+              (m) => m.id !== id
+            );
+            sessionUpdates[sessionId] = (sessionUpdates[sessionId] || 0) + 1;
+          }
+
+          return {
+            messagesBySession: newMessagesBySession,
+            sessions: state.sessions.map((s) =>
+              sessionUpdates[s.id]
+                ? { ...s, message_count: s.message_count - sessionUpdates[s.id] }
+                : s
+            ),
+          };
+        });
+
+        if (apiAdapterManager.shouldUseRemote()) {
+          for (const { id } of messagesToDelete) {
+            syncManager.addOperation('delete_message', { id }).catch((err) => {
+              console.error('Failed to sync delete_message:', err);
+            });
+          }
+        }
+      },
+
+      batchFavoriteMessages: async (messageIds: string[], favorite: boolean) => {
+        for (const id of messageIds) {
+          await chatRepository.updateMessage(id, { is_favorite: favorite });
+        }
+
+        set((state) => {
+          const newMessagesBySession = { ...state.messagesBySession };
+
+          Object.keys(newMessagesBySession).forEach((sessionId) => {
+            newMessagesBySession[sessionId] = newMessagesBySession[sessionId].map((m) =>
+              messageIds.includes(m.id) ? { ...m, is_favorite: favorite } : m
+            );
+          });
+
+          return { messagesBySession: newMessagesBySession };
+        });
+
+        if (apiAdapterManager.shouldUseRemote()) {
+          for (const id of messageIds) {
+            syncManager
+              .addOperation('update_message', { id, is_favorite: favorite })
+              .catch((err) => {
+                console.error('Failed to sync update_message:', err);
+              });
+          }
+        }
+      },
+
+      batchExportMessages: async (messageIds: string[], format: 'json' | 'txt' | 'md') => {
+        const messages: Message[] = [];
+
+        for (const id of messageIds) {
+          const message = await chatRepository.getMessage(id);
+          if (message) {
+            messages.push(message);
+          }
+        }
+
+        let content = '';
+        let filename = '';
+        let mimeType = '';
+
+        switch (format) {
+          case 'json':
+            content = JSON.stringify(messages, null, 2);
+            filename = 'messages.json';
+            mimeType = 'application/json';
+            break;
+          case 'txt':
+            content = messages
+              .map((m) => `[${m.role.toUpperCase()}] ${m.created_at}\n${m.content}\n`)
+              .join('\n---\n\n');
+            filename = 'messages.txt';
+            mimeType = 'text/plain';
+            break;
+          case 'md':
+            content = messages
+              .map(
+                (m) => `### ${m.role === 'user' ? '用户' : 'AI'} (${m.created_at})\n\n${m.content}`
+              )
+              .join('\n\n---\n\n');
+            filename = 'messages.md';
+            mimeType = 'text/markdown';
+            break;
+        }
+
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        return { success: true, count: messages.length };
       },
     }),
     {

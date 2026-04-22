@@ -304,7 +304,7 @@ export class DataValidator {
     }
 
     // 特殊字符检查
-    const specialChars = /[<>\"\'&]/g;
+    const specialChars = /[<>"'&]/g;
     if (specialChars.test(query)) {
       warnings.push('搜索词包含特殊字符，可能影响搜索结果');
     }

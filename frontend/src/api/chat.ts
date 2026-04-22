@@ -13,6 +13,8 @@ import type {
   Relation,
 } from '../types/chat';
 
+const STREAM_TIMEOUT = 60000;
+
 function transformSession(data: Record<string, unknown>): Session {
   return {
     id: data.id as string,
@@ -62,6 +64,7 @@ function transformMessage(data: Record<string, unknown>) {
     sources: ((data.sources as unknown[]) || []) as Source[],
     entities,
     keywords: data.keywords as string[],
+    relations: ((data.relations as unknown[]) || []) as Relation[],
     feedback: data.feedback as 'helpful' | 'unclear' | null | undefined,
     is_favorite: (data.is_favorite as boolean) || false,
     is_edited: (data.is_edited as boolean) || false,
@@ -141,72 +144,94 @@ export const chatApi = {
       const decoder = new TextDecoder();
       let lastResponse: ChatResponse | null = null;
       let lastActivityTime = Date.now();
+      let sseBuffer = '';
+      let accumulatedContent = '';
+      let latestEntities: Entity[] = [];
+      let latestKeywords: string[] = [];
+      let latestRelations: Relation[] = [];
 
       if (reader) {
         let done = false;
         while (!done) {
           const readPromise = reader.read();
-
-          const result = await Promise.race([
-            readPromise,
-            new Promise<{ done: boolean; value?: Uint8Array }>((_, reject) => {
-              setTimeout(() => {
-                if (Date.now() - lastActivityTime > STREAM_TIMEOUT) {
-                  reject(new Error('Stream read timeout'));
-                }
-              }, STREAM_TIMEOUT);
-            }),
-          ]);
+          const timeoutPromise = new Promise<{ done: boolean; value?: Uint8Array }>((_, reject) => {
+            setTimeout(() => {
+              if (Date.now() - lastActivityTime > STREAM_TIMEOUT) {
+                reject(new Error('Stream read timeout'));
+              }
+            }, STREAM_TIMEOUT);
+          });
+          const result = await Promise.race([readPromise, timeoutPromise]);
 
           const { done: readerDone, value } = result;
           done = readerDone;
           if (done) break;
 
           lastActivityTime = Date.now();
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split('\n');
+          sseBuffer += decoder.decode(value, { stream: true });
+          const events = sseBuffer.split('\n\n');
+          sseBuffer = events.pop() || '';
 
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.type === 'content_chunk' || data.type === 'content') {
-                  onChunk(data.content);
-                } else if (data.type === 'entities') {
-                  // 处理实体数据
-                  const entities = data.entities || [];
-                  onEntities?.(entities);
-                } else if (data.type === 'keywords') {
-                  // 处理关键词数据
-                  const keywords = data.keywords || [];
-                  onKeywords?.(keywords);
-                } else if (data.type === 'relations') {
-                  // 处理关系数据
-                  const relations = data.relations || [];
-                  onRelations?.(relations);
-                } else if (data.type === 'complete') {
-                  lastResponse = {
-                    message_id: data.message_id,
-                    content: data.content,
-                    role: 'assistant',
-                    sources: data.sources || [],
-                    entities: data.entities || [],
-                    keywords: data.keywords || [],
-                    relations: data.relations || [],
-                    created_at: new Date().toISOString(),
-                  };
-                } else if (data.type === 'error') {
-                  throw new Error(data.message || 'Stream error');
-                }
-              } catch {
-                console.warn('Failed to parse SSE data:', line);
+          for (const rawEvent of events) {
+            const dataLines = rawEvent
+              .split('\n')
+              .map((line) => line.trim())
+              .filter((line) => line.startsWith('data:'))
+              .map((line) => line.replace(/^data:\s?/, ''));
+
+            if (dataLines.length === 0) continue;
+            const payload = dataLines.join('\n');
+            if (payload === '[DONE]') continue;
+
+            try {
+              const data = JSON.parse(payload);
+              if (data.type === 'content_chunk' || data.type === 'content') {
+                const chunkText = String(data.content || '');
+                accumulatedContent += chunkText;
+                onChunk(chunkText);
+              } else if (data.type === 'entities') {
+                latestEntities = Array.isArray(data.entities) ? data.entities : [];
+                onEntities?.(latestEntities);
+              } else if (data.type === 'keywords') {
+                latestKeywords = Array.isArray(data.keywords) ? data.keywords : [];
+                onKeywords?.(latestKeywords);
+              } else if (data.type === 'relations') {
+                latestRelations = Array.isArray(data.relations) ? data.relations : [];
+                onRelations?.(latestRelations);
+              } else if (data.type === 'complete') {
+                lastResponse = {
+                  message_id: data.message_id,
+                  content: data.content || accumulatedContent,
+                  role: 'assistant',
+                  sources: data.sources || [],
+                  entities: data.entities || latestEntities,
+                  keywords: data.keywords || latestKeywords,
+                  relations: data.relations || latestRelations,
+                  created_at: new Date().toISOString(),
+                };
+              } else if (data.type === 'error') {
+                throw new Error(data.message || 'Stream error');
               }
+            } catch {
+              console.warn('Failed to parse SSE data event');
             }
           }
         }
       }
 
-      clearTimeout(timeoutId);
+      if (!lastResponse && accumulatedContent.trim()) {
+        lastResponse = {
+          message_id: `msg_${Date.now()}`,
+          content: accumulatedContent,
+          role: 'assistant',
+          sources: [],
+          entities: latestEntities,
+          keywords: latestKeywords,
+          relations: latestRelations,
+          created_at: new Date().toISOString(),
+        };
+      }
+
       if (lastResponse) {
         onComplete(lastResponse);
       }
@@ -224,6 +249,7 @@ export const chatApi = {
             sources: (aiMessage.sources || []) as Source[],
             entities: (aiMessage.entities || []) as Entity[],
             keywords: aiMessage.keywords || [],
+            relations: aiMessage.relations || [],
             created_at: aiMessage.created_at,
           });
         }

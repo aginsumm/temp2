@@ -158,7 +158,7 @@ export default function UnifiedInputArea({
     setInputValue('');
     setCharCount(0);
     setUploadedFiles([]);
-  }, [inputValue, uploadedFiles, disabled, isLoading, charCount, onSend]);
+  }, [inputValue, uploadedFiles, disabled, isLoading, onSend]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // 🌟 拦截中文输入法回车误触

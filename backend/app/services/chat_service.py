@@ -196,7 +196,12 @@ class MessageService:
         
         result = await self.db.execute(
             select(Message)
-            .options(selectinload(Message.sources), selectinload(Message.entities))
+            .options(
+                selectinload(Message.sources),
+                selectinload(Message.entities),
+                selectinload(Message.relations),
+                selectinload(Message.keyword_records),
+            )
             .where(Message.session_id == session_id)
             .order_by(Message.created_at)
             .offset(offset)
@@ -213,7 +218,12 @@ class MessageService:
     async def get_message(self, message_id: str) -> Optional[Message]:
         result = await self.db.execute(
             select(Message)
-            .options(selectinload(Message.sources), selectinload(Message.entities))
+            .options(
+                selectinload(Message.sources),
+                selectinload(Message.entities),
+                selectinload(Message.relations),
+                selectinload(Message.keyword_records),
+            )
             .where(Message.id == message_id)
         )
         return result.scalar_one_or_none()

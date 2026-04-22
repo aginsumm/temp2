@@ -174,6 +174,7 @@ class ChatMessageRequest(BaseModel):
     session_id: str
     content: str
     message_type: str = "text"
+    resume_from: Optional[int] = None  # 断点续传：从第几个字符继续
     
     class Config:
         json_schema_extra = {
