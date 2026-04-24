@@ -39,6 +39,10 @@ class GraphSyncService {
   private listeners: Map<string, Set<SyncListener>> = new Map();
   private version: number = 0;
   private unsubscribeFromStore: (() => void) | null = null;
+  private debounceTimer: NodeJS.Timeout | null = null;
+  private pendingEvent: GraphSyncEvent | null = null;
+  private lastNotifiedVersion = 0;
+  private readonly DEBOUNCE_DELAY = 100;
 
   private constructor() {
     this.initStoreSubscription();
@@ -52,7 +56,7 @@ class GraphSyncService {
   }
 
   /**
-   * 订阅 graphStore 的更新，自动分发事件
+   * 订阅 graphStore 的更新，自动分发事件（带防抖）
    */
   private initStoreSubscription(): void {
     this.unsubscribeFromStore = useGraphStore.subscribe((state, prevState) => {
@@ -62,7 +66,7 @@ class GraphSyncService {
 
       if (entitiesChanged || relationsChanged || keywordsChanged) {
         this.version++;
-        
+
         const event: GraphSyncEvent = {
           type: SyncEventType.UPDATE,
           source: (state.source as SyncSource) || SyncSource.CHAT,
@@ -75,7 +79,19 @@ class GraphSyncService {
           version: this.version,
         };
 
-        this.notifyListeners(event);
+        this.pendingEvent = event;
+
+        if (this.debounceTimer) {
+          clearTimeout(this.debounceTimer);
+        }
+
+        this.debounceTimer = setTimeout(() => {
+          if (this.pendingEvent) {
+            this.notifyListeners(this.pendingEvent);
+            this.lastNotifiedVersion = this.pendingEvent.version;
+            this.pendingEvent = null;
+          }
+        }, this.DEBOUNCE_DELAY);
       }
     });
   }
@@ -84,15 +100,19 @@ class GraphSyncService {
    * 通知所有监听器
    */
   private notifyListeners(event: GraphSyncEvent): void {
-    console.log('🔵 graphSyncService.notifyListeners:', {
-      source: event.source,
-      entities: event.entities.length,
-      relations: event.relations.length,
-      listenersCount: this.listeners.size,
-    });
-    
+    if (import.meta.env.DEV) {
+      console.log('🔵 graphSyncService.notifyListeners:', {
+        source: event.source,
+        entities: event.entities.length,
+        relations: event.relations.length,
+        listenersCount: this.listeners.size,
+      });
+    }
+
     this.listeners.forEach((listenerSet, moduleId) => {
-      console.log(`  → 通知模块：${moduleId}, 监听器数量：${listenerSet.size}`);
+      if (import.meta.env.DEV) {
+        console.log(`  → 通知模块：${moduleId}, 监听器数量：${listenerSet.size}`);
+      }
       listenerSet.forEach((listener) => {
         try {
           listener(event);
@@ -140,7 +160,7 @@ class GraphSyncService {
 
   /**
    * 从 Chat 模块更新图谱数据
-   * 直接更新 graphStore，自动触发事件分发
+   * 使用增量合并，避免全量覆盖
    */
   updateFromChat(
     entities: Entity[],
@@ -149,36 +169,37 @@ class GraphSyncService {
     sessionId?: string,
     messageId?: string
   ): void {
-    console.log('🔵 graphSyncService.updateFromChat 被调用:', {
-      entities: entities.length,
-      relations: relations.length,
-      keywords: keywords.length,
-    });
+    if (import.meta.env.DEV) {
+      console.log('🔵 graphSyncService.updateFromChat 被调用:', {
+        entities: entities.length,
+        relations: relations.length,
+        keywords: keywords.length,
+      });
+    }
 
-    useGraphStore.getState().updateGraphData(
-      entities,
-      relations,
-      keywords,
-      sessionId,
-      messageId,
-      'chat'
-    );
+    const currentState = useGraphStore.getState();
+    const hasExistingData = currentState.entities.length > 0 || currentState.relations.length > 0;
 
-    console.log('✅ graphStore 已更新，事件将自动分发');
+    if (hasExistingData) {
+      useGraphStore.getState().mergeGraphData(entities, relations, keywords);
+    } else {
+      useGraphStore
+        .getState()
+        .updateGraphData(entities, relations, keywords, sessionId, messageId, 'chat');
+    }
+
+    if (import.meta.env.DEV) {
+      console.log('✅ graphStore 已更新，事件将自动分发');
+    }
   }
 
   /**
    * 从 Knowledge 模块更新图谱数据
    */
   updateFromKnowledge(entities: Entity[], relations: Relation[], keywords: string[]): void {
-    useGraphStore.getState().updateGraphData(
-      entities,
-      relations,
-      keywords,
-      undefined,
-      undefined,
-      'knowledge'
-    );
+    useGraphStore
+      .getState()
+      .updateGraphData(entities, relations, keywords, undefined, undefined, 'knowledge');
   }
 
   /**
@@ -191,14 +212,9 @@ class GraphSyncService {
     sessionId?: string,
     messageId?: string
   ): void {
-    useGraphStore.getState().updateGraphData(
-      entities,
-      relations,
-      keywords,
-      sessionId,
-      messageId,
-      'snapshot'
-    );
+    useGraphStore
+      .getState()
+      .updateGraphData(entities, relations, keywords, sessionId, messageId, 'snapshot');
   }
 
   /**

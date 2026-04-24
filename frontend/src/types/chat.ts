@@ -107,6 +107,7 @@ export interface ChatRequest {
   session_id: string;
   content: string;
   message_type?: 'text' | 'voice';
+  file_urls?: string[];
 }
 
 export interface ChatResponse {

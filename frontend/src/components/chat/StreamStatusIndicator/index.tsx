@@ -1,4 +1,3 @@
-import { motion, AnimatePresence } from 'framer-motion';
 import { WifiOff, RefreshCw, CheckCircle } from 'lucide-react';
 
 interface StreamReconnectingProps {
@@ -12,19 +11,10 @@ export const StreamReconnecting: React.FC<StreamReconnectingProps> = ({
   maxAttempts,
   estimatedTime,
 }) => (
-  <motion.div
-    initial={{ opacity: 0, y: 10 }}
-    animate={{ opacity: 1, y: 0 }}
-    exit={{ opacity: 0, y: -10 }}
-    className="flex items-center gap-3 px-4 py-3 rounded-xl bg-yellow-50 border border-yellow-200"
-  >
-    <motion.div
-      animate={{ rotate: 360 }}
-      transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-      className="text-yellow-600"
-    >
+  <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-yellow-50 border border-yellow-200 animate-in fade-in slide-in-from-bottom-2 duration-300">
+    <div className="text-yellow-600 animate-spin">
       <RefreshCw size={18} />
-    </motion.div>
+    </div>
     <div className="flex-1">
       <p className="text-sm font-medium text-yellow-800">
         连接中断，正在重连（{attempt}/{maxAttempts}）...
@@ -33,7 +23,7 @@ export const StreamReconnecting: React.FC<StreamReconnectingProps> = ({
         <p className="text-xs text-yellow-600 mt-0.5">预计 {estimatedTime} 秒后恢复</p>
       )}
     </div>
-  </motion.div>
+  </div>
 );
 
 interface StreamReconnectedProps {
@@ -41,15 +31,10 @@ interface StreamReconnectedProps {
 }
 
 export const StreamReconnected: React.FC<StreamReconnectedProps> = ({ attempt }) => (
-  <motion.div
-    initial={{ opacity: 0, scale: 0.9 }}
-    animate={{ opacity: 1, scale: 1 }}
-    exit={{ opacity: 0, scale: 0.9 }}
-    className="flex items-center gap-3 px-4 py-3 rounded-xl bg-green-50 border border-green-200"
-  >
+  <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-green-50 border border-green-200 animate-in fade-in zoom-in-95 duration-300">
     <CheckCircle size={18} className="text-green-600" />
     <p className="text-sm font-medium text-green-800">连接已恢复（重连 {attempt} 次）</p>
-  </motion.div>
+  </div>
 );
 
 interface StreamFailedProps {
@@ -58,28 +43,21 @@ interface StreamFailedProps {
 }
 
 export const StreamFailed: React.FC<StreamFailedProps> = ({ message, onRetry }) => (
-  <motion.div
-    initial={{ opacity: 0, y: 10 }}
-    animate={{ opacity: 1, y: 0 }}
-    exit={{ opacity: 0, y: -10 }}
-    className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200"
-  >
+  <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200 animate-in fade-in slide-in-from-bottom-2 duration-300">
     <WifiOff size={18} className="text-red-600" />
     <div className="flex-1">
       <p className="text-sm font-medium text-red-800">连接失败</p>
       <p className="text-xs text-red-600 mt-0.5">{message}</p>
     </div>
     {onRetry && (
-      <motion.button
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
+      <button
         onClick={onRetry}
-        className="px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
+        className="px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-all duration-200 hover:scale-105 active:scale-95"
       >
         重试
-      </motion.button>
+      </button>
     )}
-  </motion.div>
+  </div>
 );
 
 interface StreamStatusIndicatorProps {
@@ -99,20 +77,21 @@ export const StreamStatusIndicator: React.FC<StreamStatusIndicatorProps> = ({
   message,
   onRetry,
 }) => {
+  if (status === 'idle') return null;
+
   return (
-    <AnimatePresence mode="wait">
+    <div className="mb-3">
       {status === 'reconnecting' && (
         <StreamReconnecting
-          key="reconnecting"
           attempt={attempt}
           maxAttempts={maxAttempts}
           estimatedTime={estimatedTime}
         />
       )}
-      {status === 'reconnected' && <StreamReconnected key="reconnected" attempt={attempt || 0} />}
+      {status === 'reconnected' && <StreamReconnected attempt={attempt || 0} />}
       {status === 'failed' && (
-        <StreamFailed key="failed" message={message || '连接失败，请稍后重试'} onRetry={onRetry} />
+        <StreamFailed message={message || '连接失败，请稍后重试'} onRetry={onRetry} />
       )}
-    </AnimatePresence>
+    </div>
   );
 };

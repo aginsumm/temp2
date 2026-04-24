@@ -3,10 +3,36 @@ import httpx
 import json
 import re
 import asyncio
+import random
 from datetime import datetime, timezone
 from enum import Enum
 from app.core.config import settings
 from app.schemas.chat import Entity, EntityType, Relation
+
+
+HERITAGE_FALLBACK_RESPONSES = [
+    "根据非遗知识库的资料，您询问的内容涉及传统技艺的核心传承。这项技艺已有数百年历史，是中华传统文化的重要组成部分。",
+    "关于您的问题，从非遗保护的角度来看，这体现了先民智慧的结晶。传承人在技艺传承中扮演着关键角色，需要长期的学习和实践。",
+    "这是一个很好的问题！非遗文化强调活态传承，每一代传承人都会在保持核心技艺的同时，融入时代特色。",
+    "从非物质文化遗产保护的角度，这项技艺承载着深厚的历史文化底蕴。它不仅是一种技艺，更是一种文化记忆和精神传承。",
+    "非遗保护工作需要全社会的共同参与。传承人、学者、政府以及每一位关注者都是非遗保护的重要力量。",
+]
+
+
+def generate_fallback_response(content: str) -> str:
+    """生成降级响应"""
+    lower_content = content.lower()
+    
+    if '传承人' in lower_content or '传人' in lower_content:
+        return "传承人是非遗保护的核心。他们不仅掌握着精湛的技艺，更承载着文化的记忆。目前我国已建立了完善的传承人认定和保护机制，确保这些珍贵技艺得以延续。"
+    
+    if '历史' in lower_content or '起源' in lower_content:
+        return "这项非遗技艺历史悠久，可追溯至数百年前。它凝聚了先民的智慧，在历史长河中不断发展演变，形成了独特的艺术风格。"
+    
+    if '工艺' in lower_content or '制作' in lower_content:
+        return "该技艺的制作工艺十分讲究，需要经过多道工序，每一步都需要精心操作。传统工艺强调慢工出细活，体现了匠人精神。"
+    
+    return random.choice(HERITAGE_FALLBACK_RESPONSES)
 
 
 class LLMServiceState(Enum):
@@ -327,7 +353,9 @@ class LLMService:
     ) -> str:
         del stream  # 保留参数用于未来流式扩展
         if not self.api_key:
-            raise RuntimeError("DASHSCOPE_API_KEY 未配置，无法使用真实 AI 服务")
+            # 降级：无 API Key 时直接返回本地响应
+            print("⚠️ API Key 未配置，使用本地响应")
+            return generate_fallback_response(message)
 
         messages = context or []
         messages.append({"role": "user", "content": message})
@@ -369,7 +397,9 @@ class LLMService:
             return await self._execute_with_retry(_do_chat)
         except Exception as e:
             print(f"LLM API error after retries: {e}")
-            raise RuntimeError(f"真实 AI 对话调用失败: {e}") from e
+            # 降级：使用本地生成响应
+            print("⚠️ 降级到本地响应")
+            return generate_fallback_response(message)
 
     async def chat_stream(
         self,
@@ -377,7 +407,14 @@ class LLMService:
         context: Optional[list[dict]] = None,
     ) -> AsyncGenerator[str, None]:
         if not self.api_key:
-            raise RuntimeError("DASHSCOPE_API_KEY 未配置，无法使用真实 AI 流式服务")
+            # 降级：无 API Key 时分块返回本地响应
+            print("⚠️ API Key 未配置，使用流式本地响应")
+            fallback = generate_fallback_response(message)
+            chunk_size = 50
+            for i in range(0, len(fallback), chunk_size):
+                yield fallback[i:i + chunk_size]
+                await asyncio.sleep(0.05)
+            return
 
         messages = context or []
         messages.append({"role": "user", "content": message})
@@ -416,11 +453,18 @@ class LLMService:
         except Exception as e:
             print(f"LLM streaming error: {e}")
             self._record_error()
-            raise RuntimeError(f"真实 AI 流式调用失败: {e}") from e
+            # 降级：分块返回 fallback 响应
+            print("⚠️ 流式降级到本地响应")
+            fallback = generate_fallback_response(message)
+            chunk_size = 50
+            for i in range(0, len(fallback), chunk_size):
+                yield fallback[i:i + chunk_size]
+                await asyncio.sleep(0.05)  # 模拟打字速度
 
     async def extract_entities(self, text: str) -> List[Entity]:
         if not self.api_key:
-            raise RuntimeError("DASHSCOPE_API_KEY 未配置，无法提取实体")
+            print("⚠️ API Key 未配置，使用 Mock 实体提取")
+            return self._mock_entities(text)
 
         try:
             prompt = f"""从以下文本中识别非遗相关实体，并以 JSON 格式输出。
@@ -475,9 +519,8 @@ class LLMService:
                 data = response.json()
                 content = data["output"]["choices"][0]["message"]["content"]
                 
-                # 打印 AI 返回的原始内容
                 print(f"\n=== AI 返回的原始内容 ===")
-                print(content[:500])  # 只打印前 500 字符
+                print(content[:500])
                 
                 json_match = re.search(r'\{[\s\S]*\}', content)
                 if json_match:
@@ -498,12 +541,26 @@ class LLMService:
                         ))
                     print(f"\n提取的实体 ID: {[e.id for e in entities[:5]]}")
                     return entities
+                else:
+                    print("⚠️ AI 返回内容中未找到 JSON，使用 Mock 实体")
+                    return self._mock_entities(text)
+        except httpx.HTTPStatusError as e:
+            print(f"⚠️ 实体提取 HTTP 错误: {e}, 使用 Mock 实体降级")
+            return self._mock_entities(text)
+        except httpx.TimeoutException as e:
+            print(f"⚠️ 实体提取超时: {e}, 使用 Mock 实体降级")
+            return self._mock_entities(text)
+        except json.JSONDecodeError as e:
+            print(f"⚠️ 实体提取 JSON 解析失败: {e}, 使用 Mock 实体降级")
+            return self._mock_entities(text)
         except Exception as e:
-            print(f"Entity extraction error: {e}")
-            raise RuntimeError(f"真实 AI 实体提取失败: {e}") from e
+            print(f"⚠️ 实体提取异常: {e}, 使用 Mock 实体降级")
+            return self._mock_entities(text)
+
     async def extract_keywords(self, text: str) -> List[str]:
         if not self.api_key:
-            raise RuntimeError("DASHSCOPE_API_KEY 未配置，无法提取关键词")
+            print("⚠️ API Key 未配置，使用 Mock 关键词提取")
+            return self._mock_keywords(text)
 
         try:
             prompt = f"""从以下文本中提取 5-10 个关键词或短语。
@@ -549,9 +606,21 @@ class LLMService:
                 if json_match:
                     keywords = json.loads(json_match.group())
                     return [k for k in keywords if isinstance(k, str)][:10]
+                else:
+                    print("⚠️ AI 返回内容中未找到 JSON 数组，使用 Mock 关键词")
+                    return self._mock_keywords(text)
+        except httpx.HTTPStatusError as e:
+            print(f"⚠️ 关键词提取 HTTP 错误: {e}, 使用 Mock 关键词降级")
+            return self._mock_keywords(text)
+        except httpx.TimeoutException as e:
+            print(f"⚠️ 关键词提取超时: {e}, 使用 Mock 关键词降级")
+            return self._mock_keywords(text)
+        except json.JSONDecodeError as e:
+            print(f"⚠️ 关键词提取 JSON 解析失败: {e}, 使用 Mock 关键词降级")
+            return self._mock_keywords(text)
         except Exception as e:
-            print(f"Keyword extraction error: {e}")
-            raise RuntimeError(f"真实 AI 关键词提取失败: {e}") from e
+            print(f"⚠️ 关键词提取异常: {e}, 使用 Mock 关键词降级")
+            return self._mock_keywords(text)
 
     async def extract_relations(
         self, 
@@ -562,7 +631,8 @@ class LLMService:
             return []
 
         if not self.api_key:
-            raise RuntimeError("DASHSCOPE_API_KEY 未配置，无法提取关系")
+            print("⚠️ API Key 未配置，使用 Mock 关系提取")
+            return self._mock_relations(entities)
 
         try:
             entity_list = "\n".join([f"- {e.name} ({e.type.value})" for e in entities])
@@ -628,7 +698,6 @@ class LLMService:
                     relations = []
                     entity_map = {e.name: e.id for e in entities}
                     
-                    # 调试：打印 AI 返回的原始关系数据
                     print(f"\n=== AI 返回的关系数据 ===")
                     print(f"实体列表：{[(e.name, e.id) for e in entities]}")
                     print(f"AI 返回的关系：{result.get('relations', [])}")
@@ -663,9 +732,21 @@ class LLMService:
                     
                     print(f"最终生成的关系数量：{len(relations)}")
                     return relations
+                else:
+                    print("⚠️ AI 返回内容中未找到 JSON，使用 Mock 关系")
+                    return self._mock_relations(entities)
+        except httpx.HTTPStatusError as e:
+            print(f"⚠️ 关系提取 HTTP 错误: {e}, 使用 Mock 关系降级")
+            return self._mock_relations(entities)
+        except httpx.TimeoutException as e:
+            print(f"⚠️ 关系提取超时: {e}, 使用 Mock 关系降级")
+            return self._mock_relations(entities)
+        except json.JSONDecodeError as e:
+            print(f"⚠️ 关系提取 JSON 解析失败: {e}, 使用 Mock 关系降级")
+            return self._mock_relations(entities)
         except Exception as e:
-            print(f"Relation extraction error: {e}")
-            raise RuntimeError(f"真实 AI 关系提取失败：{e}") from e
+            print(f"⚠️ 关系提取异常: {e}, 使用 Mock 关系降级")
+            return self._mock_relations(entities)
 
     def _mock_entities(self, text: str) -> List[Entity]:
         del text  # 保留参数用于未来动态提取

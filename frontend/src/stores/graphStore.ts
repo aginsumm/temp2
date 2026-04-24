@@ -81,27 +81,27 @@ export const useGraphStore = create<GraphState>()(
       mergeGraphData: (newEntities, newRelations, newKeywords) => {
         const state = get();
 
-        const existingEntityIds = new Set(state.entities.map((e) => e.id));
-        const mergedEntities = [
-          ...state.entities,
-          ...newEntities.filter((e) => !existingEntityIds.has(e.id)),
-        ];
+        // 基于实体 ID 去重，保留最新的数据
+        const entityMap = new Map<string, Entity>();
+        state.entities.forEach((e) => entityMap.set(e.id, e));
+        newEntities.forEach((e) => entityMap.set(e.id, e));
+        const mergedEntities = Array.from(entityMap.values());
 
-        const existingRelationKeys = new Set(
-          state.relations.map((r) => `${r.source}-${r.target}-${r.type}`)
-        );
-        const mergedRelations = [
-          ...state.relations,
-          ...newRelations.filter(
-            (r) => !existingRelationKeys.has(`${r.source}-${r.target}-${r.type}`)
-          ),
-        ];
+        // 基于 source-target-type 去重关系
+        const relationMap = new Map<string, Relation>();
+        state.relations.forEach((r) => {
+          const key = `${r.source}-${r.target}-${r.type}`;
+          relationMap.set(key, r);
+        });
+        newRelations.forEach((r) => {
+          const key = `${r.source}-${r.target}-${r.type}`;
+          relationMap.set(key, r);
+        });
+        const mergedRelations = Array.from(relationMap.values());
 
-        const existingKeywords = new Set(state.keywords);
-        const mergedKeywords = [
-          ...state.keywords,
-          ...(newKeywords || []).filter((k) => !existingKeywords.has(k)),
-        ];
+        // 关键词去重
+        const keywordSet = new Set([...state.keywords, ...(newKeywords || [])]);
+        const mergedKeywords = Array.from(keywordSet);
 
         set({
           entities: mergedEntities,

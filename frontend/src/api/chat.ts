@@ -109,152 +109,190 @@ export const chatApi = {
     onComplete: (response: ChatResponse) => void,
     onEntities?: (entities: Entity[]) => void,
     onKeywords?: (keywords: string[]) => void,
-    onRelations?: (relations: Relation[]) => void
-  ): Promise<void> => {
-    try {
-      const token = localStorage.getItem('token') || '';
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
+    onRelations?: (relations: Relation[]) => void,
+    onInterrupt?: (partialContent: string) => void
+  ): Promise<{ abort: () => void }> => {
+    const controller = new AbortController();
+    // 将变量声明提升到函数顶部，确保 catch 块可以访问
+    let accumulatedContent = '';
 
-      // ✅ 使用环境变量配置的 API 地址
-      const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
-      const controller = new AbortController();
+    const executeStream = async () => {
+      try {
+        const token = localStorage.getItem('token') || '';
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
 
-      const response = await fetch(`${baseUrl}/chat/stream`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          session_id: request.session_id,
-          content: request.content,
-          message_type: request.message_type || 'text',
-        }),
-        signal: controller.signal,
-      });
+        const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
 
-      // 如果后端没返回成功状态，直接抛出错误，进入 catch
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+        const response = await fetch(`${baseUrl}/chat/stream`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            session_id: request.session_id,
+            content: request.content,
+            message_type: request.message_type || 'text',
+            file_urls: request.file_urls || [],
+          }),
+          signal: controller.signal,
+        });
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let lastResponse: ChatResponse | null = null;
-      let lastActivityTime = Date.now();
-      let sseBuffer = '';
-      let accumulatedContent = '';
-      let latestEntities: Entity[] = [];
-      let latestKeywords: string[] = [];
-      let latestRelations: Relation[] = [];
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
 
-      if (reader) {
-        let done = false;
-        while (!done) {
-          const readPromise = reader.read();
-          const timeoutPromise = new Promise<{ done: boolean; value?: Uint8Array }>((_, reject) => {
-            setTimeout(() => {
-              if (Date.now() - lastActivityTime > STREAM_TIMEOUT) {
-                reject(new Error('Stream read timeout'));
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let lastResponse: ChatResponse | null = null;
+        let lastActivityTime = Date.now();
+        let sseBuffer = '';
+        // accumulatedContent 已在函数顶部声明
+        let latestEntities: Entity[] = [];
+        let latestKeywords: string[] = [];
+        let latestRelations: Relation[] = [];
+
+        if (reader) {
+          let done = false;
+          while (!done) {
+            const readPromise = reader.read();
+            const timeoutPromise = new Promise<{ done: boolean; value?: Uint8Array }>(
+              (_, reject) => {
+                setTimeout(() => {
+                  if (Date.now() - lastActivityTime > STREAM_TIMEOUT) {
+                    reject(new Error('Stream read timeout'));
+                  }
+                }, STREAM_TIMEOUT);
               }
-            }, STREAM_TIMEOUT);
-          });
-          const result = await Promise.race([readPromise, timeoutPromise]);
+            );
+            const result = await Promise.race([readPromise, timeoutPromise]);
 
-          const { done: readerDone, value } = result;
-          done = readerDone;
-          if (done) break;
+            const { done: readerDone, value } = result;
+            done = readerDone;
+            if (done) break;
 
-          lastActivityTime = Date.now();
-          sseBuffer += decoder.decode(value, { stream: true });
-          const events = sseBuffer.split('\n\n');
-          sseBuffer = events.pop() || '';
+            lastActivityTime = Date.now();
+            sseBuffer += decoder.decode(value, { stream: true });
+            const events = sseBuffer.split('\n\n');
+            sseBuffer = events.pop() || '';
 
-          for (const rawEvent of events) {
-            const dataLines = rawEvent
-              .split('\n')
-              .map((line) => line.trim())
-              .filter((line) => line.startsWith('data:'))
-              .map((line) => line.replace(/^data:\s?/, ''));
+            for (const rawEvent of events) {
+              const dataLines = rawEvent
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line.startsWith('data:'))
+                .map((line) => line.replace(/^data:\s?/, ''));
 
-            if (dataLines.length === 0) continue;
-            const payload = dataLines.join('\n');
-            if (payload === '[DONE]') continue;
+              if (dataLines.length === 0) continue;
+              const payload = dataLines.join('\n');
+              if (payload === '[DONE]') continue;
 
-            try {
-              const data = JSON.parse(payload);
-              if (data.type === 'content_chunk' || data.type === 'content') {
-                const chunkText = String(data.content || '');
-                accumulatedContent += chunkText;
-                onChunk(chunkText);
-              } else if (data.type === 'entities') {
-                latestEntities = Array.isArray(data.entities) ? data.entities : [];
-                onEntities?.(latestEntities);
-              } else if (data.type === 'keywords') {
-                latestKeywords = Array.isArray(data.keywords) ? data.keywords : [];
-                onKeywords?.(latestKeywords);
-              } else if (data.type === 'relations') {
-                latestRelations = Array.isArray(data.relations) ? data.relations : [];
-                onRelations?.(latestRelations);
-              } else if (data.type === 'complete') {
-                lastResponse = {
-                  message_id: data.message_id,
-                  content: data.content || accumulatedContent,
-                  role: 'assistant',
-                  sources: data.sources || [],
-                  entities: data.entities || latestEntities,
-                  keywords: data.keywords || latestKeywords,
-                  relations: data.relations || latestRelations,
-                  created_at: new Date().toISOString(),
-                };
-              } else if (data.type === 'error') {
-                throw new Error(data.message || 'Stream error');
+              try {
+                const data = JSON.parse(payload);
+                if (data.type === 'content_chunk' || data.type === 'content') {
+                  const chunkText = String(data.content || '');
+                  accumulatedContent += chunkText;
+                  onChunk(chunkText);
+                } else if (data.type === 'entities') {
+                  latestEntities = Array.isArray(data.entities) ? data.entities : [];
+                  onEntities?.(latestEntities);
+                } else if (data.type === 'keywords') {
+                  latestKeywords = Array.isArray(data.keywords) ? data.keywords : [];
+                  onKeywords?.(latestKeywords);
+                } else if (data.type === 'relations') {
+                  latestRelations = Array.isArray(data.relations) ? data.relations : [];
+                  onRelations?.(latestRelations);
+                } else if (data.type === 'complete') {
+                  lastResponse = {
+                    message_id: data.message_id,
+                    content: data.content || accumulatedContent,
+                    role: 'assistant',
+                    sources: data.sources || [],
+                    entities: data.entities || latestEntities,
+                    keywords: data.keywords || latestKeywords,
+                    relations: data.relations || latestRelations,
+                    created_at: new Date().toISOString(),
+                  };
+                } else if (data.type === 'error') {
+                  throw new Error(data.message || 'Stream error');
+                }
+              } catch (parseError) {
+                if (parseError instanceof Error && parseError.message.includes('Stream error')) {
+                  throw parseError;
+                }
+                console.warn('Failed to parse SSE data event, skipping:', payload.slice(0, 100));
               }
-            } catch {
-              console.warn('Failed to parse SSE data event');
             }
           }
         }
-      }
 
-      if (!lastResponse && accumulatedContent.trim()) {
-        lastResponse = {
-          message_id: `msg_${Date.now()}`,
-          content: accumulatedContent,
-          role: 'assistant',
-          sources: [],
-          entities: latestEntities,
-          keywords: latestKeywords,
-          relations: latestRelations,
-          created_at: new Date().toISOString(),
-        };
-      }
-
-      if (lastResponse) {
-        onComplete(lastResponse);
-      }
-    } catch (error) {
-      console.warn('Stream API unavailable, using local mock response');
-      await mockChatService.sendMessageStream(
-        request.session_id,
-        request.content,
-        onChunk,
-        (aiMessage) => {
-          onComplete({
-            message_id: aiMessage.id,
-            content: aiMessage.content,
+        if (!lastResponse && accumulatedContent.trim()) {
+          lastResponse = {
+            message_id: `msg_${Date.now()}`,
+            content: accumulatedContent,
             role: 'assistant',
-            sources: (aiMessage.sources || []) as Source[],
-            entities: (aiMessage.entities || []) as Entity[],
-            keywords: aiMessage.keywords || [],
-            relations: aiMessage.relations || [],
-            created_at: aiMessage.created_at,
-          });
+            sources: [],
+            entities: latestEntities,
+            keywords: latestKeywords,
+            relations: latestRelations,
+            created_at: new Date().toISOString(),
+          };
         }
-      );
-    }
+
+        if (lastResponse) {
+          onComplete(lastResponse);
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          console.log('Stream aborted by user');
+          if (onInterrupt && accumulatedContent.trim()) {
+            onInterrupt(accumulatedContent);
+          }
+          return;
+        }
+
+        console.warn('Stream error, falling back to mock response');
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('chat:mockFallback', {
+              detail: { sessionId: request.session_id, content: request.content },
+            })
+          );
+        }
+        try {
+          await mockChatService.sendMessageStream(
+            request.session_id,
+            request.content,
+            onChunk,
+            (aiMessage) => {
+              onComplete({
+                message_id: aiMessage.id,
+                content: aiMessage.content,
+                role: 'assistant',
+                sources: (aiMessage.sources || []) as Source[],
+                entities: (aiMessage.entities || []) as Entity[],
+                keywords: aiMessage.keywords || [],
+                relations: aiMessage.relations || [],
+                created_at: aiMessage.created_at,
+              });
+            }
+          );
+        } catch (mockError) {
+          console.error('Mock response also failed:', mockError);
+          throw error;
+        }
+      }
+    };
+
+    executeStream();
+
+    return {
+      abort: () => {
+        controller.abort();
+      },
+    };
   },
 
   getSessions: async (page = 1, pageSize = 20): Promise<SessionListResponse> => {
@@ -594,7 +632,13 @@ export const chatApi = {
     };
   },
 
-  getRecommendations: async (sessionId: string) => {
+  getRecommendations: async (params?: {
+    session_id?: string;
+    entities?: string[];
+    keywords?: string[];
+    context?: string;
+    limit?: number;
+  }) => {
     if (apiAdapterManager.shouldUseLocal()) {
       return {
         questions: [
@@ -609,9 +653,15 @@ export const chatApi = {
       const response = await apiAdapterManager.request<{
         questions: Array<{ id: string; question: string }>;
       }>({
-        method: 'GET',
+        method: 'POST',
         url: '/chat/recommendations',
-        params: { session_id: sessionId },
+        data: {
+          session_id: params?.session_id,
+          entities: params?.entities || [],
+          keywords: params?.keywords || [],
+          context: params?.context,
+          limit: params?.limit || 6,
+        },
       });
       return response.data;
     } catch (error) {

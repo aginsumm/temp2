@@ -24,9 +24,12 @@ from app.schemas.chat import (
     Entity,
     Relation,
     RelationType,
+    RecommendationRequest,
 )
 from app.services.chat_service import SessionService, MessageService
 from app.services.llm_service import llm_service
+from app.services.source_retrieval import retrieve_sources_from_knowledge
+from app.services.question_generator import question_generator
 from app.models.chat import MessageRole
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
@@ -176,18 +179,28 @@ async def send_message(
         if not session:
             raise HTTPException(status_code=404, detail="会话不存在")
 
+        # 处理文件 URL，将其附加到消息内容中
+        user_content = request.content
+        if request.file_urls:
+            file_references = []
+            for url in request.file_urls:
+                filename = url.split('/')[-1] if '/' in url else url
+                file_references.append(f"[文件: {filename}]({url})")
+            user_content = f"{request.content}\n\n{' '.join(file_references)}"
+
         await message_service.create_message(
             session_id=request.session_id,
-            content=request.content,
+            content=user_content,
             role=MessageRole.user,
         )
 
-        ai_response = await llm_service.chat(request.content)
+        ai_response = await llm_service.chat(user_content)
         entities = await llm_service.extract_entities(ai_response)
         keywords = await llm_service.extract_keywords(ai_response)
         relations = await llm_service.extract_relations(ai_response, entities)
 
-        sources = [Source(**s) for s in MOCK_SOURCES]
+        # 动态检索相关来源，替换硬编码的 MOCK_SOURCES
+        sources = await retrieve_sources_from_knowledge(db, request.content, entities)
 
         ai_message = await message_service.create_message(
             session_id=request.session_id,
@@ -241,10 +254,19 @@ async def send_message_stream(
             await db.flush()
             session = new_session
 
+        # 处理文件 URL，将其附加到消息内容中
+        user_content = request.content
+        if request.file_urls:
+            file_references = []
+            for url in request.file_urls:
+                filename = url.split('/')[-1] if '/' in url else url
+                file_references.append(f"[文件: {filename}]({url})")
+            user_content = f"{request.content}\n\n{' '.join(file_references)}"
+
         if request.resume_from is None:
             await message_service.create_message(
                 session_id=request.session_id,
-                content=request.content,
+                content=user_content,
                 role=MessageRole.user,
             )
     except HTTPException:
@@ -340,7 +362,8 @@ async def send_message_stream(
                 }, ensure_ascii=False)
                 yield f"data: {relations_data}\n\n"
 
-            sources = [Source(**s) for s in MOCK_SOURCES]
+            # 动态检索相关来源，替换硬编码的 MOCK_SOURCES
+            sources = await retrieve_sources_from_knowledge(db, request.content, entities)
 
             try:
                 ai_message = await message_service.create_message(
@@ -385,17 +408,80 @@ async def send_message_stream(
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-@router.get("/chat/recommendations")
-async def get_recommendations():
-    questions = [
-        RecommendedQuestion(id="1", question="什么是非物质文化遗产？"),
-        RecommendedQuestion(id="2", question="如何成为非遗传承人？"),
-        RecommendedQuestion(id="3", question="非遗保护有哪些重要意义？"),
-        RecommendedQuestion(id="4", question="传统技艺如何与现代生活结合？"),
-        RecommendedQuestion(id="5", question="中国有哪些世界级非遗项目？"),
-        RecommendedQuestion(id="6", question="非遗传承面临哪些挑战？"),
-    ]
-    return {"questions": questions}
+@router.post("/chat/recommendations")
+async def get_recommendations(
+    request: RecommendationRequest,
+    db: AsyncSession = Depends(get_db),
+    _user_id: str = Depends(get_current_or_guest),
+):
+    """获取智能推荐问题 - 基于对话历史上下文"""
+    try:
+        conversation_history = []
+        extracted_entities = request.entities or []
+        extracted_keywords = request.keywords or []
+        context_content = request.context or ""
+
+        if request.session_id:
+            message_service = MessageService(db)
+            messages, total, _ = await message_service.get_session_messages(
+                request.session_id, page=1, page_size=10
+            )
+
+            for msg in messages[-6:]:
+                conversation_history.append({
+                    "role": msg.role.value if hasattr(msg.role, "value") else msg.role,
+                    "content": msg.content[:200],
+                })
+
+                if msg.entities:
+                    for entity in msg.entities:
+                        name = entity.name if hasattr(entity, "name") else entity
+                        if name not in extracted_entities:
+                            extracted_entities.append(name)
+
+                if msg.keyword_records:
+                    for kw_record in msg.keyword_records:
+                        kw = kw_record.keyword if hasattr(kw_record, "keyword") else kw_record
+                        if kw not in extracted_keywords:
+                            extracted_keywords.append(kw)
+
+            if conversation_history:
+                last_user_msg = next(
+                    (m for m in reversed(conversation_history) if m["role"] == "user"), None
+                )
+                if last_user_msg:
+                    context_content = context_content or last_user_msg["content"]
+
+        hour = datetime.now().hour
+        if 6 <= hour < 12:
+            time_of_day = 'morning'
+        elif 12 <= hour < 18:
+            time_of_day = 'afternoon'
+        elif 18 <= hour < 23:
+            time_of_day = 'evening'
+        else:
+            time_of_day = 'night'
+
+        recommendations = question_generator.generate_recommendations(
+            entities=extracted_entities,
+            keywords=extracted_keywords,
+            context=context_content,
+            time_of_day=time_of_day,
+            limit=request.limit
+        )
+
+        return {"questions": recommendations}
+    except Exception as e:
+        logger.error(f"Failed to generate recommendations: {e}")
+        questions = [
+            RecommendedQuestion(id="1", question="什么是非物质文化遗产？"),
+            RecommendedQuestion(id="2", question="如何成为非遗传承人？"),
+            RecommendedQuestion(id="3", question="非遗保护有哪些重要意义？"),
+            RecommendedQuestion(id="4", question="传统技艺如何与现代生活结合？"),
+            RecommendedQuestion(id="5", question="中国有哪些世界级非遗项目？"),
+            RecommendedQuestion(id="6", question="非遗传承面临哪些挑战？"),
+        ]
+        return {"questions": questions}
 
 
 @router.post("/chat/message/{message_id}/feedback")
@@ -635,3 +721,157 @@ async def get_session_messages(
     except Exception as e:
         logger.error(f"Error getting session messages: {e}")
         raise HTTPException(status_code=500, detail=f"获取消息失败: {str(e)}")
+
+
+@router.post("/chat/message/{message_id}/regenerate")
+async def regenerate_message(
+    message_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_or_guest),
+):
+    """重新生成指定消息的 AI 回复"""
+    session_service = SessionService(db)
+    message_service = MessageService(db)
+
+    try:
+        # 获取原消息
+        original_message = await message_service.get_message(message_id)
+        if not original_message:
+            raise HTTPException(status_code=404, detail="消息不存在")
+
+        if original_message.role != MessageRole.assistant:
+            raise HTTPException(status_code=400, detail="只能重新生成 AI 回复")
+
+        # 获取用户消息（上一条消息）
+        messages = await message_service.get_messages_by_session(
+            original_message.session_id, page=1, page_size=100
+        )
+        
+        user_message = None
+        for i, msg in enumerate(messages):
+            if msg.id == message_id and i > 0:
+                user_message = messages[i - 1]
+                break
+
+        if not user_message:
+            raise HTTPException(status_code=404, detail="找不到对应的用户消息")
+
+        # 调用 LLM 重新生成
+        ai_response = await llm_service.chat(user_message.content)
+        entities = await llm_service.extract_entities(ai_response)
+        keywords = await llm_service.extract_keywords(ai_response)
+        relations = await llm_service.extract_relations(ai_response, entities)
+        sources = await retrieve_sources_from_knowledge(db, user_message.content, entities)
+
+        # 更新原消息内容
+        updated_message = await message_service.update_message(
+            message_id=message_id,
+            content=ai_response,
+            sources=sources,
+            entities=entities,
+            keywords=keywords,
+            relations=relations,
+        )
+
+        return ChatMessageResponse(
+            message_id=updated_message.id,
+            content=updated_message.content,
+            role=updated_message.role,
+            sources=sources,
+            entities=entities,
+            keywords=keywords,
+            created_at=updated_message.created_at.isoformat(),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error regenerating message: {e}")
+        raise HTTPException(status_code=500, detail=f"重新生成失败: {str(e)}")
+
+
+@router.post("/chat/message/{message_id}/regenerate/stream")
+async def regenerate_message_stream(
+    message_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_or_guest),
+):
+    """流式重新生成指定消息的 AI 回复"""
+    session_service = SessionService(db)
+    message_service = MessageService(db)
+
+    try:
+        # 获取原消息
+        original_message = await message_service.get_message(message_id)
+        if not original_message:
+            raise HTTPException(status_code=404, detail="消息不存在")
+
+        if original_message.role != MessageRole.assistant:
+            raise HTTPException(status_code=400, detail="只能重新生成 AI 回复")
+
+        # 获取用户消息
+        messages = await message_service.get_messages_by_session(
+            original_message.session_id, page=1, page_size=100
+        )
+        
+        user_message = None
+        for i, msg in enumerate(messages):
+            if msg.id == message_id and i > 0:
+                user_message = messages[i - 1]
+                break
+
+        if not user_message:
+            raise HTTPException(status_code=404, detail="找不到对应的用户消息")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error preparing regeneration: {e}")
+        raise HTTPException(status_code=500, detail=f"准备重新生成失败: {str(e)}")
+
+    async def generate():
+        full_content = ""
+        accumulated_length = 0
+        
+        try:
+            async for chunk in llm_service.chat_stream(user_message.content):
+                full_content += chunk
+                accumulated_length += len(chunk)
+                
+                data = json.dumps({
+                    "type": "content_chunk",
+                    "content": chunk,
+                    "accumulated_length": accumulated_length
+                }, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+
+            entities = await llm_service.extract_entities(full_content)
+            keywords = await llm_service.extract_keywords(full_content)
+            relations = await llm_service.extract_relations(full_content, entities)
+            sources = await retrieve_sources_from_knowledge(db, user_message.content, entities)
+
+            if entities:
+                yield f"data: {json.dumps({'type': 'entities', 'entities': [e.model_dump() for e in entities]}, ensure_ascii=False)}\n\n"
+
+            if keywords:
+                yield f"data: {json.dumps({'type': 'keywords', 'keywords': keywords}, ensure_ascii=False)}\n\n"
+
+            if relations:
+                yield f"data: {json.dumps({'type': 'relations', 'relations': [r.model_dump() for r in relations]}, ensure_ascii=False)}\n\n"
+
+            await message_service.update_message(
+                message_id=message_id,
+                content=full_content,
+                sources=sources,
+                entities=entities,
+                keywords=keywords,
+                relations=relations,
+            )
+
+            yield f"data: {json.dumps({'type': 'complete', 'message_id': message_id, 'content': full_content}, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            logger.error(f"Stream regeneration error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")

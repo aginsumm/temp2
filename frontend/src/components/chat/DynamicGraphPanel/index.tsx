@@ -23,6 +23,18 @@ const ENTITY_COLORS: Record<EntityType, string> = CATEGORY_COLORS;
 
 const ENTITY_LABELS: Record<EntityType, string> = CATEGORY_LABELS;
 
+/**
+ * HTML 转义函数，防止 XSS 攻击
+ */
+function escapeHtml(unsafe: string): string {
+  return unsafe
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 interface DynamicGraphPanelProps {
   entities?: Entity[];
   relations?: Relation[];
@@ -103,8 +115,9 @@ export default function DynamicGraphPanel({
             const category = data.category as EntityType;
             const color = ENTITY_COLORS[category] || '#666666';
             const value = (data.value as number) ?? 0.5;
-            const name = data.name as string;
+            const name = escapeHtml(String(data.name || ''));
             const description = data.description as string | undefined;
+            const safeDescription = description ? escapeHtml(description.slice(0, 80)) : '';
             return `
               <div style="padding: 12px; min-width: 200px;">
                 <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
@@ -115,22 +128,25 @@ export default function DynamicGraphPanel({
                   <span style="color: var(--color-text-secondary);">类型:</span> ${ENTITY_LABELS[category] || category}
                 </div>
                 <div style="color: var(--color-text-muted); font-size: 13px;">
-                  <span style="color: var(--color-text-secondary);">重要性:</span> 
+                  <span style="color: var(--color-text-secondary);">重要性:</span>
                   <span style="color: var(--color-warning); font-weight: bold;">${(value * 100).toFixed(0)}%</span>
                 </div>
-                ${description ? `<div style="color: var(--color-text-secondary); font-size: 13px; margin-top: 4px;">${description.slice(0, 80)}...</div>` : ''}
+                ${safeDescription ? `<div style="color: var(--color-text-secondary); font-size: 13px; margin-top: 4px;">${safeDescription}...</div>` : ''}
               </div>
             `;
           }
           const data = param.data as Record<string, unknown> | undefined;
+          const source = escapeHtml(String(data?.source || ''));
+          const target = escapeHtml(String(data?.target || ''));
+          const relationType = escapeHtml(String(data?.relationType || '关联'));
           return `
             <div style="padding: 12px; min-width: 200px;">
               <div style="color: var(--color-primary); font-size: 14px; margin-bottom: 8px;">
-                ${data?.source} → ${data?.target}
+                ${source} → ${target}
               </div>
               <div style="color: var(--color-text-muted); font-size: 13px;">
-                <span style="color: var(--color-text-secondary);">关系:</span> 
-                <span style="color: var(--color-success); font-weight: bold;">${data?.relationType || '关联'}</span>
+                <span style="color: var(--color-text-secondary);">关系:</span>
+                <span style="color: var(--color-success); font-weight: bold;">${relationType}</span>
               </div>
             </div>
           `;

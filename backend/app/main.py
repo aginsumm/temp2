@@ -38,9 +38,14 @@ async def print_routes():
 # 2. 确保存放头像的文件夹存在
 os.makedirs("static/avatars", exist_ok=True)
 
-# 3. 挂载静态资源目录 (加上这行代码，放在 app.add_middleware 下面)
-# 这样前端就能通过 http://localhost:8000/static/avatars/xxx.png 访问图片了
+# 3. 确保上传目录存在
+os.makedirs("uploads", exist_ok=True)
+
+# 4. 挂载静态资源目录
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# 5. 挂载上传文件目录，使上传的文件可通过 URL 访问
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 app.add_middleware(
     CORSMiddleware,

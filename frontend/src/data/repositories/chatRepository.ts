@@ -151,25 +151,76 @@ function extractKeywords(message: string): string[] {
 function extractEntities(message: string): Entity[] {
   const extractedEntities = entityExtractor.extract(message);
 
-  return extractedEntities.map((entity: ExtractedEntity) => ({
-    id: `entity_${entity.type}_${entity.startIndex}_${Date.now()}`,
-    name: entity.text,
-    type: mapEntityType(entity.type),
-    description: getEntityDescription(entity.type),
-    relevance: entity.confidence,
-  }));
+  return extractedEntities.map((entity: ExtractedEntity) => {
+    const mappedType = mapEntityType(entity.type, entity.text);
+    return {
+      id: `entity_${entity.type}_${entity.startIndex}_${Date.now()}`,
+      name: entity.text,
+      type: mappedType,
+      description: getEntityDescription(mappedType),
+      relevance: entity.confidence,
+    };
+  });
 }
 
-function mapEntityType(extractedType: string): Entity['type'] {
+function mapEntityType(extractedType: string, entityText?: string): Entity['type'] {
   const typeMap: Record<string, Entity['type']> = {
+    // 人物相关
     person: 'inheritor',
     organization: 'inheritor',
+    // 地理位置
     location: 'region',
+    // 时间相关
     date: 'period',
+    // 技艺/概念相关
     number: 'technique',
     concept: 'technique',
+    // 作品/产品
     product: 'work',
   };
+
+  // 基于实体文本内容的智能推断
+  if (entityText) {
+    const text = entityText.toLowerCase();
+
+    // 检查是否是材料相关
+    const materialKeywords = [
+      '丝',
+      '绸',
+      '棉',
+      '麻',
+      '竹',
+      '木',
+      '陶',
+      '瓷',
+      '纸',
+      '墨',
+      '颜料',
+      '染料',
+    ];
+    if (materialKeywords.some((kw) => text.includes(kw))) {
+      return 'material';
+    }
+
+    // 检查是否是图案/纹样相关
+    const patternKeywords = ['纹', '图案', '花', '龙凤', '云纹', '几何', '图腾'];
+    if (patternKeywords.some((kw) => text.includes(kw))) {
+      return 'pattern';
+    }
+
+    // 检查是否是作品相关
+    const workKeywords = ['作品', '画作', '雕塑', '器物', '器具', '服饰', '建筑'];
+    if (workKeywords.some((kw) => text.includes(kw))) {
+      return 'work';
+    }
+
+    // 检查是否是传承人相关（包含特定称谓）
+    const inheritorKeywords = ['大师', '传承人', '艺人', '工匠', '先生', '女士'];
+    if (inheritorKeywords.some((kw) => text.includes(kw))) {
+      return 'inheritor';
+    }
+  }
+
   return typeMap[extractedType] || 'technique';
 }
 
@@ -715,6 +766,188 @@ class ChatRepository {
       controller.abort();
     };
   }
+
+  async regenerateMessageStream(
+    messageId: string,
+    onChunk: (chunk: string) => void,
+    onComplete: (message: Message) => void,
+    onError?: (error: Error) => void,
+    onStatusChange?: (status: 'connecting' | 'streaming' | 'complete' | 'error') => void
+  ): Promise<() => void> {
+    let isAborted = false;
+    const controller = new AbortController();
+    const STREAM_TIMEOUT = 60000;
+    const MAX_RETRIES = 1;
+    let retryCount = 0;
+
+    const executeStream = async (): Promise<void> => {
+      try {
+        const token = localStorage.getItem('token') || '';
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+
+        onStatusChange?.('connecting');
+
+        const timeoutController = new AbortController();
+        const timeoutId = setTimeout(() => {
+          timeoutController.abort();
+        }, STREAM_TIMEOUT);
+
+        const response = await fetch(`${apiBaseUrl}/chat/message/${messageId}/regenerate/stream`, {
+          method: 'POST',
+          headers,
+          signal: AbortSignal.any([controller.signal, timeoutController.signal]),
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          const errText = await response.text();
+          let errorType = 'UNKNOWN_ERROR';
+
+          if (response.status === 401) {
+            errorType = 'AUTH_ERROR';
+          } else if (response.status === 429) {
+            errorType = 'RATE_LIMIT_ERROR';
+          } else if (response.status >= 500) {
+            errorType = 'SERVER_ERROR';
+          }
+
+          throw new Error(`[${errorType}] HTTP ${response.status}: ${errText}`);
+        }
+
+        onStatusChange?.('streaming');
+
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let latestEntities: Entity[] = [];
+        let latestKeywords: string[] = [];
+        let latestRelations: Relation[] = [];
+        let fullContent = '';
+        let sseBuffer = '';
+        let lastActivityTime = Date.now();
+        const ACTIVITY_TIMEOUT = 30000;
+
+        if (reader) {
+          while (!isAborted) {
+            if (Date.now() - lastActivityTime > ACTIVITY_TIMEOUT) {
+              throw new Error('[STREAM_TIMEOUT] 流式响应超时，30秒无数据');
+            }
+
+            try {
+              const { done, value } = await Promise.race([
+                reader.read(),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error('[READ_TIMEOUT] 读取超时')), 10000)
+                ),
+              ]);
+
+              if (done) break;
+
+              lastActivityTime = Date.now();
+              sseBuffer += decoder.decode(value, { stream: true });
+              const events = sseBuffer.split('\n\n');
+              sseBuffer = events.pop() || '';
+
+              for (const rawEvent of events) {
+                const dataLines = rawEvent
+                  .split('\n')
+                  .map((line) => line.trim())
+                  .filter((line) => line.startsWith('data:'))
+                  .map((line) => line.replace(/^data:\s?/, ''));
+
+                for (const dataStr of dataLines) {
+                  try {
+                    const data = JSON.parse(dataStr);
+
+                    if (data.type === 'content_chunk') {
+                      fullContent += data.content;
+                      onChunk(data.content);
+                    } else if (data.type === 'entities') {
+                      latestEntities = data.entities || [];
+                    } else if (data.type === 'keywords') {
+                      latestKeywords = data.keywords || [];
+                    } else if (data.type === 'relations') {
+                      latestRelations = data.relations || [];
+                    } else if (data.type === 'complete') {
+                      const regeneratedMessage: Message = {
+                        id: messageId,
+                        session_id: '',
+                        role: 'assistant',
+                        content: fullContent,
+                        created_at: new Date().toISOString(),
+                        entities: latestEntities,
+                        keywords: latestKeywords,
+                        relations: latestRelations,
+                        sources: [],
+                      };
+                      onComplete(regeneratedMessage);
+                      onStatusChange?.('complete');
+                      return;
+                    } else if (data.type === 'error') {
+                      throw new Error(data.message || '重新生成失败');
+                    }
+                  } catch (parseError) {
+                    console.warn('Failed to parse SSE event:', dataStr, parseError);
+                  }
+                }
+              }
+            } catch (readError) {
+              const error = readError as Error & { message?: string };
+              if (error.message?.includes('READ_TIMEOUT')) {
+                continue;
+              }
+              throw readError;
+            }
+          }
+        }
+
+        if (!isAborted && fullContent) {
+          const regeneratedMessage: Message = {
+            id: messageId,
+            session_id: '',
+            role: 'assistant',
+            content: fullContent,
+            created_at: new Date().toISOString(),
+            entities: latestEntities,
+            keywords: latestKeywords,
+            relations: latestRelations,
+            sources: [],
+          };
+          onComplete(regeneratedMessage);
+          onStatusChange?.('complete');
+        }
+      } catch (error) {
+        const err = error as Error & { message?: string };
+        const errorMessage = err.message || '重新生成失败';
+
+        if (
+          (errorMessage.includes('网络') || errorMessage.includes('Network')) &&
+          retryCount < MAX_RETRIES
+        ) {
+          retryCount++;
+          console.log(`🔄 网络错误，重试 ${retryCount}/${MAX_RETRIES}...`);
+          await new Promise((resolve) => setTimeout(resolve, 1000 * retryCount));
+          await executeStream();
+          return;
+        }
+
+        console.error('❌ 重新生成最终失败:', errorMessage);
+        if (onError) onError(new Error(errorMessage));
+        onStatusChange?.('error');
+      }
+    };
+
+    executeStream();
+
+    return () => {
+      isAborted = true;
+      controller.abort();
+    };
+  }
+
   async submitFeedback(messageId: string, feedback: 'helpful' | 'unclear'): Promise<void> {
     await this.updateMessage(messageId, { feedback });
   }

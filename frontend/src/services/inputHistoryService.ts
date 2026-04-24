@@ -14,9 +14,21 @@ export interface HistoryItem {
 class InputHistoryService {
   private history: HistoryItem[] = [];
   private debounceTimer: number | null = null;
+  private listeners: Set<() => void> = new Set();
 
   constructor() {
     this.loadFromStorage();
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private notifyListeners(): void {
+    this.listeners.forEach((listener) => listener());
   }
 
   private loadFromStorage(): void {
@@ -71,6 +83,7 @@ class InputHistoryService {
     }
 
     this.saveToStorage();
+    this.notifyListeners();
   }
 
   addInputDebounced(text: string, sessionId?: string): void {
@@ -123,6 +136,7 @@ class InputHistoryService {
     if (index !== -1) {
       this.history.splice(index, 1);
       this.saveToStorage();
+      this.notifyListeners();
       return true;
     }
     return false;
@@ -131,6 +145,7 @@ class InputHistoryService {
   clearHistory(): void {
     this.history = [];
     this.saveToStorage();
+    this.notifyListeners();
   }
 
   getItemById(id: string): HistoryItem | null {
