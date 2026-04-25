@@ -410,8 +410,12 @@ export default function DynamicGraphPanel({
         relations: relations || [],
       });
       onSaveSnapshot?.();
+      
+      // 新增：给用户明确的跳转引导
+      toast.success('快照保存成功', '请前往顶部导航栏的【智能图谱】界面的“快照”中导入查看');
     } catch (error) {
       console.error('Failed to save snapshot:', error);
+      toast.error('保存失败', '保存图谱快照时发生错误');
     } finally {
       setIsSaving(false);
     }

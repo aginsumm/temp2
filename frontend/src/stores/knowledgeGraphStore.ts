@@ -20,10 +20,16 @@ interface GraphState {
   detailPanelCollapsed: boolean;
 }
 
+// 【安全修改】：保留老的属性防止其他组件报错，新增 filters 嵌套对象
 interface FilterState {
   category: string;
   keyword: string;
   sortBy: SortBy;
+  filters: {
+    searchQuery: string;
+    categories: string[];
+    minImportance: number;
+  };
 }
 
 interface UserInteractionState {
@@ -46,6 +52,9 @@ interface KnowledgeGraphStore extends GraphState, FilterState, UserInteractionSt
   setCategory: (category: string) => void;
   setKeyword: (keyword: string) => void;
   setSortBy: (sortBy: SortBy) => void;
+  
+  // 【新增】：暴露 setFilters 方法
+  setFilters: (filters: Partial<FilterState['filters']>) => void;
 
   resetFilter: () => void;
 
@@ -80,6 +89,13 @@ const useKnowledgeGraphStore = create<KnowledgeGraphStore>()(
       keyword: '',
       sortBy: 'relevance',
 
+      // 【新增】：初始化 filters 默认状态
+      filters: {
+        searchQuery: '',
+        categories: [],
+        minImportance: 0,
+      },
+
       setViewMode: (mode) => set({ viewMode: mode }),
 
       setSelectedNode: (nodeId) => set({ selectedNode: nodeId }),
@@ -106,11 +122,23 @@ const useKnowledgeGraphStore = create<KnowledgeGraphStore>()(
 
       setSortBy: (sortBy) => set({ sortBy }),
 
+      // 【新增】：实现 setFilters
+      setFilters: (newFilters) =>
+        set((state) => ({
+          filters: { ...state.filters, ...newFilters },
+        })),
+
       resetFilter: () =>
         set({
           category: 'all',
           keyword: '',
           sortBy: 'relevance',
+          // 重置时把新筛选器也归零
+          filters: {
+            searchQuery: '',
+            categories: [],
+            minImportance: 0,
+          },
         }),
 
       favorites: [],
