@@ -4,11 +4,13 @@ import { Network, List, Download, Bookmark, FolderOpen, X, SlidersHorizontal } f
 import useKnowledgeGraphStore from '../../stores/knowledgeGraphStore';
 import { knowledgeApi, Entity } from '../../api/knowledge';
 import { snapshotService } from '../../api/snapshot';
-import type { GraphSnapshot } from '../../types/chat';
+import type { GraphSnapshot, Relation } from '../../types/chat';
 import { graphSyncService } from '../../services/graphSyncService';
 import { GraphSkeleton, ListSkeleton } from '../../components/common/Skeleton';
 import ErrorBoundary from '../../components/common/ErrorBoundary';
 import { useToast } from '../../components/common/Toast';
+import { loadSnapshot } from '../../utils/snapshotHandler';
+import { useGraphStore } from '../../stores/graphStore';
 
 const KnowledgeGraph = lazy(() => import('../../components/knowledge/KnowledgeGraph'));
 const ListView = lazy(() => import('../../components/knowledge/ListView'));
@@ -18,6 +20,10 @@ const FilterPanel = lazy(() => import('../../components/knowledge/FilterPanel'))
 export default function KnowledgePage() {
   const { viewMode, setViewMode, setSelectedNode, toggleFilterPanel, filterPanelCollapsed } =
     useKnowledgeGraphStore();
+  // 【新增】引入 graphStore 的 action 和状态
+  const lastUpdated = useGraphStore((state) => state.lastUpdated);
+  const [relations, setRelations] = useState<Relation[]>([]); 
+  // 【新增】增加关系状态
   const [isPending, startTransitionFn] = useTransition();
   const [entities, setEntities] = useState<Entity[]>([]);
   const [loading, setLoading] = useState(false);
@@ -26,6 +32,7 @@ export default function KnowledgePage() {
   const [snapshots, setSnapshots] = useState<GraphSnapshot[]>([]);
   const [isLoadingSnapshots, setIsLoadingSnapshots] = useState(false);
   const toast = useToast();
+  const updateGraphData = useGraphStore((state) => state.updateGraphData);
 
   const handleFilterChange = useCallback((filters: any) => {
     console.log('Filter changed:', filters);
@@ -93,13 +100,14 @@ export default function KnowledgePage() {
     }
   }, []);
 
-  const handleLoadSnapshot = useCallback(async (snapshot: GraphSnapshot) => {
+const handleLoadSnapshot = useCallback(async (snapshot: GraphSnapshot) => {
     try {
       const fullSnapshot = await snapshotService.getSnapshot(snapshot.id);
       if (!fullSnapshot) {
         return;
       }
 
+      // 1. 同步到全局状态，KnowledgeGraph 组件内部监听到变化会自动绘制图谱！
       graphSyncService.updateFromSnapshot(
         fullSnapshot.entities,
         fullSnapshot.relations,
@@ -108,11 +116,20 @@ export default function KnowledgePage() {
         fullSnapshot.message_id
       );
 
+      // 2. 同步到局部状态，确保如果切换到“列表视图”也能看到导入的数据
+      const mappedEntities = fullSnapshot.entities.map((e) => ({
+        ...e,
+        importance: e.importance ?? 0.5,
+      })) as unknown as Entity[];
+      setEntities(mappedEntities);
+
       setShowSnapshots(false);
+      toast.success('导入成功', '图谱已更新'); // 给个成功提示
     } catch (error) {
       console.error('Failed to load snapshot:', error);
+      toast.error('导入失败');
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     if (showSnapshots) {
