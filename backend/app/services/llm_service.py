@@ -9,6 +9,21 @@ from enum import Enum
 from app.core.config import settings
 from app.schemas.chat import Entity, EntityType, Relation
 
+# 问答主对话使用的系统身份（与 DashScope messages 中 role=system 对应）
+CHAT_SYSTEM_PROMPT = """你是非遗小博士，专业、热情、通俗易懂的非遗文化专家。
+
+核心要求：
+1. 准确：历史年代、人名、地名必须准确，不确定时明确说明
+2. 通俗：避免学术化，多讲故事，联系现代生活
+3. 结构化：使用 Markdown 格式（## 标题、**加粗**、列表）
+4. 安全：不编造事实，不贬低任何文化，保持客观中立
+
+回答风格：像朋友交流，适度使用语气词，展现对非遗的热爱
+回答长度：800-1200 字
+回答结构：开场（简要）→ 主体（分点阐述）→ 延伸（相关知识）→ 结尾（互动）
+
+拒绝回答：与非遗无关的话题、敏感政治话题、商业推广"""
+
 
 HERITAGE_FALLBACK_RESPONSES = [
     "根据非遗知识库的资料，您询问的内容涉及传统技艺的核心传承。这项技艺已有数百年历史，是中华传统文化的重要组成部分。",
@@ -80,6 +95,7 @@ class LLMService:
         # 备用模型
         self.primary_model = "qwen-max"
         self.fallback_models = ["qwen-turbo", "qwen-plus"]
+        self.extraction_model = "qwen-plus"
         self.current_model_index = 0
         
         # 错误统计
@@ -95,6 +111,14 @@ class LLMService:
         
         # 状态转换回调
         self._state_change_callbacks = []
+
+    def _build_chat_messages(self, message: str, context: Optional[list[dict]] = None) -> list[dict]:
+        """组装发给对话模型的 messages：首条为非遗小博士系统提示，再接历史与当前用户句。"""
+        rows: list[dict] = [dict(m) for m in (context or [])]
+        if not rows or rows[0].get("role") != "system":
+            rows.insert(0, {"role": "system", "content": CHAT_SYSTEM_PROMPT})
+        rows.append({"role": "user", "content": message})
+        return rows
 
     def on_state_change(self, callback):
         """注册状态变化回调"""
@@ -242,10 +266,16 @@ class LLMService:
         """获取当前使用的模型"""
         if self.state == LLMServiceState.OFFLINE:
             return "mock"  # 离线模式不使用真实模型
-            
-        if self.current_model_index >= len(self.fallback_models):
+
+        # current_model_index = 0 时始终使用主模型（qwen-max）
+        if self.current_model_index <= 0:
+            return self.primary_model
+
+        # current_model_index > 0 时按备用模型顺序降级
+        fallback_index = self.current_model_index - 1
+        if fallback_index >= len(self.fallback_models):
             return self.fallback_models[-1]
-        return self.fallback_models[self.current_model_index]
+        return self.fallback_models[fallback_index]
 
     def _switch_to_fallback(self):
         """切换到备用模型"""
@@ -357,8 +387,7 @@ class LLMService:
             print("⚠️ API Key 未配置，使用本地响应")
             return generate_fallback_response(message)
 
-        messages = context or []
-        messages.append({"role": "user", "content": message})
+        messages = self._build_chat_messages(message, context)
 
         async def _do_chat():
             headers = {
@@ -416,8 +445,7 @@ class LLMService:
                 await asyncio.sleep(0.05)
             return
 
-        messages = context or []
-        messages.append({"role": "user", "content": message})
+        messages = self._build_chat_messages(message, context)
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -463,8 +491,8 @@ class LLMService:
 
     async def extract_entities(self, text: str) -> List[Entity]:
         if not self.api_key:
-            print("⚠️ API Key 未配置，使用 Mock 实体提取")
-            return self._mock_entities(text)
+            print("⚠️ API Key 未配置，无法进行实体提取")
+            return []
 
         try:
             prompt = f"""从以下文本中识别非遗相关实体，并以 JSON 格式输出。
@@ -502,14 +530,14 @@ class LLMService:
             }
 
             payload = {
-                "model": "qwen-turbo",
+                "model": self.extraction_model,
                 "input": {"messages": [{"role": "user", "content": prompt}]},
                 "parameters": {
                     "result_format": "message",
                 },
             }
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
                     self.base_url,
                     headers=headers,
@@ -542,25 +570,25 @@ class LLMService:
                     print(f"\n提取的实体 ID: {[e.id for e in entities[:5]]}")
                     return entities
                 else:
-                    print("⚠️ AI 返回内容中未找到 JSON，使用 Mock 实体")
-                    return self._mock_entities(text)
+                    print("⚠️ AI 返回内容中未找到 JSON，实体提取返回空结果")
+                    return []
         except httpx.HTTPStatusError as e:
-            print(f"⚠️ 实体提取 HTTP 错误: {e}, 使用 Mock 实体降级")
-            return self._mock_entities(text)
+            print(f"⚠️ 实体提取 HTTP 错误: {e}，实体提取返回空结果")
+            return []
         except httpx.TimeoutException as e:
-            print(f"⚠️ 实体提取超时: {e}, 使用 Mock 实体降级")
-            return self._mock_entities(text)
+            print(f"⚠️ 实体提取超时: {e}，实体提取返回空结果")
+            return []
         except json.JSONDecodeError as e:
-            print(f"⚠️ 实体提取 JSON 解析失败: {e}, 使用 Mock 实体降级")
-            return self._mock_entities(text)
+            print(f"⚠️ 实体提取 JSON 解析失败: {e}，实体提取返回空结果")
+            return []
         except Exception as e:
-            print(f"⚠️ 实体提取异常: {e}, 使用 Mock 实体降级")
-            return self._mock_entities(text)
+            print(f"⚠️ 实体提取异常: {e}，实体提取返回空结果")
+            return []
 
     async def extract_keywords(self, text: str) -> List[str]:
         if not self.api_key:
-            print("⚠️ API Key 未配置，使用 Mock 关键词提取")
-            return self._mock_keywords(text)
+            print("⚠️ API Key 未配置，无法进行关键词提取")
+            return []
 
         try:
             prompt = f"""从以下文本中提取 5-10 个关键词或短语。
@@ -585,14 +613,14 @@ class LLMService:
             }
 
             payload = {
-                "model": "qwen-turbo",
+                "model": self.extraction_model,
                 "input": {"messages": [{"role": "user", "content": prompt}]},
                 "parameters": {
                     "result_format": "message",
                 },
             }
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
                     self.base_url,
                     headers=headers,
@@ -607,20 +635,20 @@ class LLMService:
                     keywords = json.loads(json_match.group())
                     return [k for k in keywords if isinstance(k, str)][:10]
                 else:
-                    print("⚠️ AI 返回内容中未找到 JSON 数组，使用 Mock 关键词")
-                    return self._mock_keywords(text)
+                    print("⚠️ AI 返回内容中未找到 JSON 数组，关键词提取返回空结果")
+                    return []
         except httpx.HTTPStatusError as e:
-            print(f"⚠️ 关键词提取 HTTP 错误: {e}, 使用 Mock 关键词降级")
-            return self._mock_keywords(text)
+            print(f"⚠️ 关键词提取 HTTP 错误: {e}，关键词提取返回空结果")
+            return []
         except httpx.TimeoutException as e:
-            print(f"⚠️ 关键词提取超时: {e}, 使用 Mock 关键词降级")
-            return self._mock_keywords(text)
+            print(f"⚠️ 关键词提取超时: {e}，关键词提取返回空结果")
+            return []
         except json.JSONDecodeError as e:
-            print(f"⚠️ 关键词提取 JSON 解析失败: {e}, 使用 Mock 关键词降级")
-            return self._mock_keywords(text)
+            print(f"⚠️ 关键词提取 JSON 解析失败: {e}，关键词提取返回空结果")
+            return []
         except Exception as e:
-            print(f"⚠️ 关键词提取异常: {e}, 使用 Mock 关键词降级")
-            return self._mock_keywords(text)
+            print(f"⚠️ 关键词提取异常: {e}，关键词提取返回空结果")
+            return []
 
     async def extract_relations(
         self, 
@@ -631,13 +659,14 @@ class LLMService:
             return []
 
         if not self.api_key:
-            print("⚠️ API Key 未配置，使用 Mock 关系提取")
-            return self._mock_relations(entities)
+            print("⚠️ API Key 未配置，无法进行关系提取")
+            return []
 
         try:
             entity_list = "\n".join([f"- {e.name} ({e.type.value})" for e in entities])
             
             prompt = f"""分析以下实体之间的关系，构建知识图谱。
+若实体列表中包含「同会话已出现」的实体，且与本轮实体在语义上相关，请输出它们之间的边（优先 related_to）。
 
 可用关系类型：
 - inherits: 传承（传承人 → 技艺）
@@ -675,14 +704,14 @@ class LLMService:
             }
 
             payload = {
-                "model": "qwen-turbo",
+                "model": self.extraction_model,
                 "input": {"messages": [{"role": "user", "content": prompt}]},
                 "parameters": {
                     "result_format": "message",
                 },
             }
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
                     self.base_url,
                     headers=headers,
@@ -696,7 +725,10 @@ class LLMService:
                 if json_match:
                     result = json.loads(json_match.group())
                     relations = []
-                    entity_map = {e.name: e.id for e in entities}
+                    entity_map: dict[str, str] = {}
+                    for e in entities:
+                        if e.name and e.name not in entity_map:
+                            entity_map[e.name] = e.id
                     
                     print(f"\n=== AI 返回的关系数据 ===")
                     print(f"实体列表：{[(e.name, e.id) for e in entities]}")
@@ -733,20 +765,20 @@ class LLMService:
                     print(f"最终生成的关系数量：{len(relations)}")
                     return relations
                 else:
-                    print("⚠️ AI 返回内容中未找到 JSON，使用 Mock 关系")
-                    return self._mock_relations(entities)
+                    print("⚠️ AI 返回内容中未找到 JSON，关系提取返回空结果")
+                    return []
         except httpx.HTTPStatusError as e:
-            print(f"⚠️ 关系提取 HTTP 错误: {e}, 使用 Mock 关系降级")
-            return self._mock_relations(entities)
+            print(f"⚠️ 关系提取 HTTP 错误: {e}，关系提取返回空结果")
+            return []
         except httpx.TimeoutException as e:
-            print(f"⚠️ 关系提取超时: {e}, 使用 Mock 关系降级")
-            return self._mock_relations(entities)
+            print(f"⚠️ 关系提取超时: {e}，关系提取返回空结果")
+            return []
         except json.JSONDecodeError as e:
-            print(f"⚠️ 关系提取 JSON 解析失败: {e}, 使用 Mock 关系降级")
-            return self._mock_relations(entities)
+            print(f"⚠️ 关系提取 JSON 解析失败: {e}，关系提取返回空结果")
+            return []
         except Exception as e:
-            print(f"⚠️ 关系提取异常: {e}, 使用 Mock 关系降级")
-            return self._mock_relations(entities)
+            print(f"⚠️ 关系提取异常: {e}，关系提取返回空结果")
+            return []
 
     def _mock_entities(self, text: str) -> List[Entity]:
         del text  # 保留参数用于未来动态提取
@@ -860,7 +892,7 @@ class LLMService:
             }
 
             payload = {
-                "model": "qwen-turbo",
+                "model": self.extraction_model,
                 "input": {"messages": [{"role": "user", "content": prompt}]},
                 "parameters": {
                     "result_format": "message",

@@ -77,7 +77,30 @@ export const RELATION_TYPES = {
   uses_material: { label: '使用材料', color: '#eb2f96' },
   has_pattern: { label: '包含纹样', color: '#fadb14' },
   related_to: { label: '相关', color: '#8c8c8c' },
-};
+  influenced_by: { label: '受影响于', color: '#096dd9' },
+  contains: { label: '包含', color: '#531dab' },
+} as const;
+
+/** 后端/LLM 返回的 snake_case 关系枚举 → 与 llm_service 提示一致的中文名 */
+export function formatRelationTypeLabel(raw: string | undefined | null): string {
+  const fallback = RELATION_TYPES.related_to.label;
+  if (raw == null) return fallback;
+  const s = String(raw).trim();
+  if (!s) return fallback;
+
+  const lower = s.toLowerCase();
+  const snake = lower.replace(/\s+/g, '_');
+  const fromTable = RELATION_TYPES[snake as keyof typeof RELATION_TYPES]?.label;
+  if (fromTable) return fromTable;
+
+  const genericCn = ['关系', '关联', '相关'];
+  if (genericCn.includes(s)) return fallback;
+
+  const genericEn = ['relation', 'relationship', 'related'];
+  if (genericEn.includes(lower)) return fallback;
+
+  return s;
+}
 
 // 会话配置
 export const SESSION_CONFIG = {

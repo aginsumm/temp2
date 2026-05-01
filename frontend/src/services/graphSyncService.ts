@@ -63,8 +63,9 @@ class GraphSyncService {
       const entitiesChanged = state.entities !== prevState.entities;
       const relationsChanged = state.relations !== prevState.relations;
       const keywordsChanged = state.keywords !== prevState.keywords;
+      const graphTouched = state.lastUpdated !== prevState.lastUpdated;
 
-      if (entitiesChanged || relationsChanged || keywordsChanged) {
+      if (entitiesChanged || relationsChanged || keywordsChanged || graphTouched) {
         this.version++;
 
         const event: GraphSyncEvent = {
@@ -93,6 +94,24 @@ class GraphSyncService {
           }
         }, this.DEBOUNCE_DELAY);
       }
+    });
+  }
+
+  /**
+   * 立即通知（用于 clear 等需同步反馈的场景，不走防抖）
+   */
+  private notifyListenersImmediate(event: GraphSyncEvent): void {
+    if (import.meta.env.DEV) {
+      console.log('🔵 graphSyncService.notifyListenersImmediate:', event.type);
+    }
+    this.listeners.forEach((listenerSet, moduleId) => {
+      listenerSet.forEach((listener) => {
+        try {
+          listener(event);
+        } catch (error) {
+          console.error('Graph sync listener error:', error);
+        }
+      });
     });
   }
 
@@ -174,22 +193,31 @@ class GraphSyncService {
         entities: entities.length,
         relations: relations.length,
         keywords: keywords.length,
+        sessionId,
       });
     }
 
-    const currentState = useGraphStore.getState();
-    const hasExistingData = currentState.entities.length > 0 || currentState.relations.length > 0;
+    const store = useGraphStore.getState();
+    const sid = sessionId ?? store.activeChatSessionId;
 
-    if (hasExistingData) {
-      useGraphStore.getState().mergeGraphData(entities, relations, keywords);
+    // 旧路径：无外层会话时使用全局展示字段（不推荐；对话页应始终带 sessionId）
+    if (!sid) {
+      const hasDisplayed =
+        store.entities.length > 0 ||
+        store.relations.length > 0 ||
+        store.keywords.length > 0;
+      if (hasDisplayed) {
+        store.mergeGraphData(entities, relations, keywords);
+      } else {
+        store.updateGraphData(entities, relations, keywords, undefined, messageId, 'chat');
+      }
     } else {
-      useGraphStore
-        .getState()
-        .updateGraphData(entities, relations, keywords, sessionId, messageId, 'chat');
+      // 始终合并：无 bucket 时 merge 等价于首次写入；避免桶短暂缺失时误走 replace 丢掉历史
+      store.mergeChatSessionGraph(sid, entities, relations, keywords, messageId);
     }
 
     if (import.meta.env.DEV) {
-      console.log('✅ graphStore 已更新，事件将自动分发');
+      console.log('✅ graphStore 已更新（按会话隔离），事件将自动分发');
     }
   }
 
@@ -222,6 +250,16 @@ class GraphSyncService {
    */
   clear(): void {
     useGraphStore.getState().clearGraphData();
+    this.version++;
+    this.notifyListenersImmediate({
+      type: SyncEventType.CLEAR,
+      source: SyncSource.CHAT,
+      entities: [],
+      relations: [],
+      keywords: [],
+      timestamp: Date.now(),
+      version: this.version,
+    });
   }
 
   /**

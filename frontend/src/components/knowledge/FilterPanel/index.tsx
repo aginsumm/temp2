@@ -1,12 +1,19 @@
 import { useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Search, X, SlidersHorizontal } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import useKnowledgeGraphStore from '../../../stores/knowledgeGraphStore';
-import { useGraphStore } from '../../../stores/graphStore';
 import { getCategoryColor, getCategoryLabel } from '../../../constants/categories';
+import type { Entity } from '../../../api/knowledge';
 
 interface FilterPanelProps {
-  onFilterChange?: (filters: any) => void;
+  entities?: Entity[];
+  onFilterChange?: (filters: {
+    searchQuery: string;
+    categories: string[];
+    minImportance: number;
+    regions: string[];
+    periods: string[];
+  }) => void;
 }
 
 // 颜色映射黑科技，保持和图谱节点颜色完全一致
@@ -25,11 +32,28 @@ const getExactHexColor = (categoryName: string | undefined) => {
   return (orig && !orig.includes('var')) ? orig : '#8b5cf6'; 
 };
 
-export default function FilterPanel({ onFilterChange }: FilterPanelProps) {
+const getEntityRegion = (entity: Entity) => {
+  const metadata = (entity.metadata || {}) as Record<string, unknown>;
+  const regionFromField = typeof entity.region === 'string' ? entity.region.trim() : '';
+  const regionFromMetadata = typeof metadata.region === 'string' ? metadata.region.trim() : '';
+  if (regionFromField) return regionFromField;
+  if (regionFromMetadata) return regionFromMetadata;
+  if (entity.type === 'region' && entity.name) return entity.name.trim();
+  return '';
+};
+
+const getEntityPeriod = (entity: Entity) => {
+  const metadata = (entity.metadata || {}) as Record<string, unknown>;
+  const periodFromField = typeof entity.period === 'string' ? entity.period.trim() : '';
+  const periodFromMetadata = typeof metadata.period === 'string' ? metadata.period.trim() : '';
+  if (periodFromField) return periodFromField;
+  if (periodFromMetadata) return periodFromMetadata;
+  if (entity.type === 'period' && entity.name) return entity.name.trim();
+  return '';
+};
+
+export default function FilterPanel({ entities = [], onFilterChange }: FilterPanelProps) {
   const { toggleFilterPanel, filterPanelCollapsed, filters, setFilters } = useKnowledgeGraphStore();
-  
-  // 【核心数据源】：直接拿到当前图谱里的所有实体数据
-  const entities = useGraphStore((state) => state.entities);
 
   // 【黑科技 1：动态提取当前图谱存在的分类】
   const dynamicCategories = useMemo(() => {
@@ -51,8 +75,7 @@ export default function FilterPanel({ onFilterChange }: FilterPanelProps) {
     if (!entities) return [];
     const regs = new Set<string>();
     entities.forEach(e => {
-      // 兼容根属性或 metadata 里的属性
-      const r = e.region || (e as any).metadata?.region;
+      const r = getEntityRegion(e);
       if (r) regs.add(r);
     });
     return Array.from(regs).filter(Boolean);
@@ -63,18 +86,18 @@ export default function FilterPanel({ onFilterChange }: FilterPanelProps) {
     if (!entities) return [];
     const perds = new Set<string>();
     entities.forEach(e => {
-      const p = e.period || (e as any).metadata?.period;
+      const p = getEntityPeriod(e);
       if (p) perds.add(p);
     });
     return Array.from(perds).filter(Boolean);
   }, [entities]);
 
   const updateFilter = (
-    key: string,
-    value: any
+    key: keyof typeof filters,
+    value: string | string[] | number
   ) => {
     const newFilters = { [key]: value };
-    setFilters(newFilters as any);
+    setFilters(newFilters);
     onFilterChange?.({ ...filters, ...newFilters });
   };
 
@@ -187,7 +210,7 @@ export default function FilterPanel({ onFilterChange }: FilterPanelProps) {
             </label>
             <div className="flex flex-wrap gap-2">
               {dynamicRegions.map((region) => {
-                const isSelected = (filters as any).regions && (filters as any).regions.includes(region);
+                const isSelected = filters.regions && filters.regions.includes(region);
                 return (
                   <button
                     key={region}
@@ -215,7 +238,7 @@ export default function FilterPanel({ onFilterChange }: FilterPanelProps) {
             </label>
             <div className="flex flex-wrap gap-2">
               {dynamicPeriods.map((period) => {
-                const isSelected = (filters as any).periods && (filters as any).periods.includes(period);
+                const isSelected = filters.periods && filters.periods.includes(period);
                 return (
                   <button
                     key={period}

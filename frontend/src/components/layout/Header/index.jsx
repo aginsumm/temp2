@@ -16,6 +16,10 @@ const navItems = [
 export default function Header() {
   const location = useLocation();
   const { user, logout } = useAuthStore();
+  const API_BASE_URL =
+    import.meta.env.VITE_API_URL?.replace(/\/api\/v1\/?$/, '') ||
+    import.meta.env.VITE_API_BASE_URL?.replace(/\/api\/v1\/?$/, '') ||
+    window.location.origin;
 
   const handleLogout = async () => {
     setShowUserMenu(false);
@@ -27,6 +31,29 @@ export default function Header() {
 
   const displayName = user?.username || '';
   const displayChar = displayName.charAt(0).toUpperCase() || '游';
+  const normalizeAvatarUrl = (rawUrl) => {
+    if (!rawUrl) return null;
+    if (!rawUrl.startsWith('http')) {
+      return `${API_BASE_URL}/${rawUrl.replace(/^\//, '')}`;
+    }
+
+    try {
+      const parsed = new URL(rawUrl);
+      const isLoopbackHost =
+        parsed.hostname === 'localhost' ||
+        parsed.hostname === '127.0.0.1' ||
+        parsed.hostname === '::1';
+      if (!isLoopbackHost) return rawUrl;
+
+      const serverBase = new URL(API_BASE_URL);
+      parsed.protocol = serverBase.protocol;
+      parsed.host = serverBase.host;
+      return parsed.toString();
+    } catch {
+      return rawUrl;
+    }
+  };
+  const avatarUrl = normalizeAvatarUrl(user?.avatar);
 
   useEffect(() => {
     setShowUserMenu(false);
@@ -136,14 +163,14 @@ export default function Header() {
               <div
                 className="w-8 h-8 rounded-full flex items-center justify-center font-medium text-sm"
                 style={{
-                  background: user?.avatar ? 'transparent' : 'var(--gradient-primary)',
+                  background: avatarUrl ? 'transparent' : 'var(--gradient-primary)',
                   color: 'var(--color-text-inverse)',
-                  border: user?.avatar ? '1px solid var(--color-border-light)' : 'none',
+                  border: avatarUrl ? '1px solid var(--color-border-light)' : 'none',
                 }}
               >
-                {user?.avatar ? (
+                {avatarUrl ? (
                   <img
-                    src={user.avatar}
+                    src={avatarUrl}
                     alt={displayName}
                     className="w-full h-full object-cover rounded-full"
                   />

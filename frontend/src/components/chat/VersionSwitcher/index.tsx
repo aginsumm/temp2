@@ -253,14 +253,21 @@ export default function VersionSwitcher({
         {versions.length <= 10 ? (
           <div className="flex items-center gap-1.5" role="tablist" aria-label="版本列表">
             {versions.map((version, index) => (
-              <motion.button
+              <motion.div
                 key={version.id}
                 onClick={() => switchToVersion(version.id, index)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    switchToVersion(version.id, index);
+                  }
+                }}
                 whileHover={{ scale: 1.15 }}
                 whileTap={{ scale: 0.9 }}
                 className="group relative"
                 role="tab"
                 aria-selected={index === currentIndex}
+                tabIndex={0}
                 aria-label={`版本 ${index + 1} - ${formatTimeAgo(version.created_at)}`}
                 title={`版本 ${index + 1} - ${formatTimeAgo(version.created_at)}`}
               >
@@ -308,7 +315,7 @@ export default function VersionSwitcher({
                     <span>查看</span>
                   </button>
                 </div>
-              </motion.button>
+              </motion.div>
             ))}
           </div>
         ) : (
@@ -432,11 +439,18 @@ export default function VersionSwitcher({
             </div>
             <div className="space-y-1.5">
               {versions.map((version, index) => (
-                <motion.button
+                <motion.div
                   key={version.id}
                   onClick={() => {
                     switchToVersion(version.id, index);
                     setShowAllVersions(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      switchToVersion(version.id, index);
+                      setShowAllVersions(false);
+                    }
                   }}
                   whileHover={{ scale: 1.01 }}
                   className={`w-full flex items-center justify-between p-2 rounded-lg transition-all ${
@@ -454,6 +468,7 @@ export default function VersionSwitcher({
                   }}
                   role="option"
                   aria-selected={index === currentIndex}
+                  tabIndex={0}
                 >
                   <div className="flex items-center gap-2">
                     <div
@@ -499,7 +514,7 @@ export default function VersionSwitcher({
                       <span>查看</span>
                     </button>
                   </div>
-                </motion.button>
+                </motion.div>
               ))}
             </div>
           </motion.div>

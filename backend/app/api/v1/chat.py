@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
+import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Set
 
 from app.core.database import get_db
 from app.core.auth import get_current_user, get_current_or_guest
@@ -22,6 +23,7 @@ from app.schemas.chat import (
     RecommendedQuestion,
     Source,
     Entity,
+    EntityType,
     Relation,
     RelationType,
     RecommendationRequest,
@@ -30,10 +32,114 @@ from app.services.chat_service import SessionService, MessageService
 from app.services.llm_service import llm_service
 from app.services.source_retrieval import retrieve_sources_from_knowledge
 from app.services.question_generator import question_generator
-from app.models.chat import MessageRole
+from app.models.chat import MessageEntity, MessageRole
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 logger = logging.getLogger(__name__)
+
+
+def _entity_type_str(t: Any) -> str:
+    return t.value if hasattr(t, "value") else str(t)
+
+
+def _entity_canon_key(name: str, type_str: str) -> str:
+    return f"{(name or '').strip().casefold()}|{type_str}"
+
+
+def _message_entity_row_to_entity(row: MessageEntity) -> Entity:
+    try:
+        et = EntityType(row.type)
+    except ValueError:
+        et = EntityType.technique
+    rel = (row.relevance / 100.0) if row.relevance is not None else None
+    return Entity(
+        id=row.id,
+        name=row.name or "",
+        type=et,
+        description=row.description,
+        relevance=rel,
+    )
+
+
+async def _load_session_first_seen_entities(
+    message_service: MessageService,
+    session_id: str,
+    exclude_message_ids: Optional[Set[str]] = None,
+) -> dict[str, Entity]:
+    """按时间顺序，每个「名称+类型」首次出现的实体（用于跨轮 id 对齐）。"""
+    messages = await message_service.get_recent_session_messages(
+        session_id,
+        limit=60,
+        exclude_message_ids=exclude_message_ids,
+    )
+    first_seen: dict[str, Entity] = {}
+    for msg in messages:
+        if msg.role != MessageRole.assistant:
+            continue
+        for row in msg.entities or []:
+            ent = _message_entity_row_to_entity(row)
+            ck = _entity_canon_key(ent.name, _entity_type_str(ent.type))
+            if ck not in first_seen:
+                first_seen[ck] = ent
+    return first_seen
+
+
+def _align_entities_with_session(entities: list[Entity], first_seen: dict[str, Entity]) -> list[Entity]:
+    aligned: list[Entity] = []
+    for e in entities:
+        ck = _entity_canon_key(e.name, _entity_type_str(e.type))
+        prev_e = first_seen.get(ck)
+        if prev_e is not None:
+            aligned.append(e.model_copy(update={"id": prev_e.id}))
+        else:
+            aligned.append(e)
+    return aligned
+
+
+def _merge_entities_for_relation_extraction(
+    aligned_current: list[Entity],
+    first_seen: dict[str, Entity],
+    cap: int = 45,
+) -> list[Entity]:
+    by_key: dict[str, Entity] = {k: v for k, v in first_seen.items()}
+    for e in aligned_current:
+        by_key[_entity_canon_key(e.name, _entity_type_str(e.type))] = e
+    keys_cur = [_entity_canon_key(e.name, _entity_type_str(e.type)) for e in aligned_current]
+    seen: set[str] = set()
+    ordered: list[Entity] = []
+    for k in keys_cur:
+        if k not in seen and k in by_key:
+            ordered.append(by_key[k])
+            seen.add(k)
+        if len(ordered) >= cap:
+            return ordered
+    for k, ent in by_key.items():
+        if k in seen:
+            continue
+        ordered.append(ent)
+        seen.add(k)
+        if len(ordered) >= cap:
+            break
+    return ordered
+
+
+def _build_relation_extraction_text(user_q: str, assistant_reply: str, first_seen: dict[str, Entity]) -> str:
+    prior_lines = "\n".join(
+        f"- {e.name}（{_entity_type_str(e.type)}）"
+        for e in list(first_seen.values())[:28]
+    )
+    hint = ""
+    if prior_lines:
+        hint = (
+            "\n\n【同会话最近已出现的实体】"
+            "（用户可能在本轮继续追问这些概念；若与本轮实体有知识上的联系，请用 related_to 等类型连边。）\n"
+            + prior_lines
+        )
+    return (
+        f"【用户问题】\n{(user_q or '')[:500]}\n\n"
+        f"【助手本轮回复】\n{(assistant_reply or '')[:1400]}"
+        + hint
+    )
 
 # 常量定义
 MAX_ENTITIES = 5
@@ -193,11 +299,17 @@ async def send_message(
             content=user_content,
             role=MessageRole.user,
         )
+        # 先提交用户消息，避免长时间 LLM 调用持有 SQLite 写锁
+        await db.commit()
 
         ai_response = await llm_service.chat(user_content)
         entities = await llm_service.extract_entities(ai_response)
         keywords = await llm_service.extract_keywords(ai_response)
-        relations = await llm_service.extract_relations(ai_response, entities)
+        first_seen = await _load_session_first_seen_entities(message_service, request.session_id)
+        entities = _align_entities_with_session(entities, first_seen)
+        merged = _merge_entities_for_relation_extraction(entities, first_seen, cap=45)
+        rel_text = _build_relation_extraction_text(user_content, ai_response, first_seen)
+        relations = await llm_service.extract_relations(rel_text, merged)
 
         # 动态检索相关来源，替换硬编码的 MOCK_SOURCES
         sources = await retrieve_sources_from_knowledge(db, request.content, entities)
@@ -269,6 +381,8 @@ async def send_message_stream(
                 content=user_content,
                 role=MessageRole.user,
             )
+        # 关键：流式响应会长时间占用连接，先提交前置写入以释放 SQLite 写锁
+        await db.commit()
     except HTTPException:
         raise
     except Exception as e:
@@ -282,7 +396,7 @@ async def send_message_stream(
         
         seen = {}
         for entity in entities:
-            key = f"{entity.name.lower().strip()}_{entity.type}"
+            key = f"{entity.name.lower().strip()}_{_entity_type_str(entity.type)}"
             if key not in seen:
                 seen[key] = entity
             else:
@@ -332,9 +446,63 @@ async def send_message_stream(
                 }, ensure_ascii=False)
                 yield f"data: {data}\n\n"
 
-            entities = await llm_service.extract_entities(full_content)
-            keywords = await llm_service.extract_keywords(full_content)
-            relations = await llm_service.extract_relations(full_content, entities)
+            # 发送处理中状态，避免前端在抽取阶段误判流式超时
+            yield f"data: {json.dumps({'type': 'processing', 'stage': 'extract_start'}, ensure_ascii=False)}\n\n"
+
+            # 抽取阶段设置超时兜底，避免 complete 长时间不返回
+            try:
+                entities, keywords = await asyncio.wait_for(
+                    asyncio.gather(
+                        llm_service.extract_entities(full_content),
+                        llm_service.extract_keywords(full_content),
+                    ),
+                    timeout=90.0,
+                )
+            except Exception as extract_error:
+                logger.warning(f"Entity/keyword extraction timeout or error: {extract_error}")
+                entities = []
+                keywords = []
+                yield f"data: {json.dumps({'type': 'processing', 'stage': 'extract_failed', 'message': str(extract_error)}, ensure_ascii=False)}\n\n"
+
+            # 真实抽取为空时做一次重试（不使用 mock）
+            if full_content.strip() and len(entities) == 0:
+                yield f"data: {json.dumps({'type': 'processing', 'stage': 'extract_retry'}, ensure_ascii=False)}\n\n"
+                try:
+                    retry_entities, retry_keywords = await asyncio.wait_for(
+                        asyncio.gather(
+                            llm_service.extract_entities(full_content),
+                            llm_service.extract_keywords(full_content),
+                        ),
+                        timeout=60.0,
+                    )
+                    if retry_entities:
+                        entities = retry_entities
+                    if retry_keywords:
+                        keywords = retry_keywords
+                except Exception as retry_error:
+                    logger.warning(f"Entity/keyword extraction retry failed: {retry_error}")
+                    yield f"data: {json.dumps({'type': 'processing', 'stage': 'extract_retry_failed', 'message': str(retry_error)}, ensure_ascii=False)}\n\n"
+
+            yield f"data: {json.dumps({'type': 'processing', 'stage': 'relation_start'}, ensure_ascii=False)}\n\n"
+            try:
+                first_seen = await _load_session_first_seen_entities(
+                    message_service, request.session_id
+                )
+                entities = _align_entities_with_session(entities, first_seen)
+                merged = _merge_entities_for_relation_extraction(
+                    entities, first_seen, cap=45
+                )
+                rel_text = _build_relation_extraction_text(
+                    user_content, full_content, first_seen
+                )
+                relations = await asyncio.wait_for(
+                    llm_service.extract_relations(rel_text, merged),
+                    timeout=90.0,
+                )
+            except Exception as relation_error:
+                logger.warning(f"Relation extraction timeout or error: {relation_error}")
+                relations = []
+                yield f"data: {json.dumps({'type': 'processing', 'stage': 'relation_failed', 'message': str(relation_error)}, ensure_ascii=False)}\n\n"
 
             # 实体和关系去重
             entities = deduplicate_entities(entities)
@@ -557,7 +725,9 @@ async def create_session(
     try:
         session_service = SessionService(db)
         session = await session_service.create_session(user_id, data)
-        return SessionSchema.model_validate(session)
+        # Session.tags 在数据库中是 JSON 字符串，统一转换为 list 后再返回
+        parsed_data = parse_session_tags(session)
+        return SessionSchema(**parsed_data)
     except Exception as e:
         logger.error(f"Error creating session: {e}")
         raise HTTPException(status_code=500, detail=f"创建会话失败: {str(e)}")
@@ -760,7 +930,15 @@ async def regenerate_message(
         ai_response = await llm_service.chat(user_message.content)
         entities = await llm_service.extract_entities(ai_response)
         keywords = await llm_service.extract_keywords(ai_response)
-        relations = await llm_service.extract_relations(ai_response, entities)
+        first_seen = await _load_session_first_seen_entities(
+            message_service,
+            original_message.session_id,
+            exclude_message_ids={message_id},
+        )
+        entities = _align_entities_with_session(entities, first_seen)
+        merged = _merge_entities_for_relation_extraction(entities, first_seen, cap=45)
+        rel_text = _build_relation_extraction_text(user_message.content, ai_response, first_seen)
+        relations = await llm_service.extract_relations(rel_text, merged)
         sources = await retrieve_sources_from_knowledge(db, user_message.content, entities)
 
         # 更新原消息内容
@@ -847,7 +1025,17 @@ async def regenerate_message_stream(
 
             entities = await llm_service.extract_entities(full_content)
             keywords = await llm_service.extract_keywords(full_content)
-            relations = await llm_service.extract_relations(full_content, entities)
+            first_seen = await _load_session_first_seen_entities(
+                message_service,
+                original_message.session_id,
+                exclude_message_ids={message_id},
+            )
+            entities = _align_entities_with_session(entities, first_seen)
+            merged = _merge_entities_for_relation_extraction(entities, first_seen, cap=45)
+            rel_text = _build_relation_extraction_text(
+                user_message.content, full_content, first_seen
+            )
+            relations = await llm_service.extract_relations(rel_text, merged)
             sources = await retrieve_sources_from_knowledge(db, user_message.content, entities)
 
             if entities:

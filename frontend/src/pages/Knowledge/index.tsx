@@ -200,7 +200,7 @@ export default function KnowledgePage() {
         {/* 筛选器滚动区 */}
         <div className="flex-1 overflow-y-auto p-4">
           <Suspense fallback={<ListSkeleton />}>
-            <FilterPanel onFilterChange={handleFilterChange} />
+            <FilterPanel entities={entities} onFilterChange={handleFilterChange} />
           </Suspense>
         </div>
       </aside>

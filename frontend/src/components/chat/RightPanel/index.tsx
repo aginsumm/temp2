@@ -16,7 +16,7 @@ import {
 import { useUIStore, MIN_RIGHT_PANEL_WIDTH, MAX_RIGHT_PANEL_WIDTH } from '../../../stores/uiStore';
 import { useResizablePanel } from '../../../hooks/useResizablePanel';
 import DynamicGraphPanel from '../DynamicGraphPanel';
-import ErrorBoundary from '../../common/ErrorBoundary';
+import GraphErrorBoundary from '../../common/GraphErrorBoundary';
 import { snapshotService } from '../../../api/snapshot';
 import ConfirmDialog from '../../common/ConfirmDialog';
 import { LoadingOverlay } from '../../common/ProgressBar';
@@ -359,8 +359,11 @@ export default function RightPanel({
             className="flex flex-col h-full"
           >
             <div className="flex-1 min-h-0">
-              <ErrorBoundary>
+              <GraphErrorBoundary
+                key={`${sessionId || 'no-session'}-${messageId || 'no-message'}-${entities.length}-${relations.length}`}
+              >
                 <DynamicGraphPanel
+                  key={sessionId ? `chat-graph-${sessionId}` : 'chat-graph'}
                   entities={entities}
                   relations={relations}
                   keywords={processedKeywords.map((k) => k.text)}
@@ -371,7 +374,7 @@ export default function RightPanel({
                   showControls={true}
                   showSaveButton={true}
                 />
-              </ErrorBoundary>
+              </GraphErrorBoundary>
             </div>
           </motion.div>
         );

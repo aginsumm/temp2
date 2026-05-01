@@ -2,7 +2,11 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useChatStore, pruneVersions } from '../../stores/chatStore';
-import { useGraphStore } from '../../stores/graphStore';
+import {
+  useGraphStore,
+  sessionBundleHasContent,
+  rebuildSessionGraphBundleFromMessages,
+} from '../../stores/graphStore';
 import { useUIStore } from '../../stores/uiStore';
 import { chatDataService } from '../../services/chat';
 import { graphSyncService } from '../../services/graphSyncService';
@@ -88,6 +92,41 @@ export default function EnhancedChatPage() {
   const graphEntities = useGraphStore((state) => state.entities);
   const graphRelations = useGraphStore((state) => state.relations);
   const graphKeywords = useGraphStore((state) => state.keywords);
+  const graphSnapshotMessageId = useGraphStore((state) => state.messageId);
+
+  /** 按会话消息合并整图并写入 graphStore（每轮助手完成后与切换会话兜底用） */
+  const reconcileChatSessionGraphFromMessages = useCallback((sid: string) => {
+    const msgs = useChatStore.getState().messagesBySession[sid] || [];
+    const bundle = rebuildSessionGraphBundleFromMessages(msgs);
+    if (!sessionBundleHasContent(bundle)) {
+      const cached = useGraphStore.getState().graphsBySessionId[sid];
+      if (sessionBundleHasContent(cached)) {
+        useGraphStore.getState().setActiveChatSession(sid);
+      }
+      return;
+    }
+    graphSyncService.updateFromSnapshot(
+      bundle.entities,
+      bundle.relations,
+      bundle.keywords,
+      sid,
+      bundle.messageId ?? undefined
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!currentSessionId) return;
+
+    // 先同步激活会话，确保后续 merge 能镜像到当前侧边栏展示
+    useGraphStore.getState().setActiveChatSession(currentSessionId);
+
+    const cached = useGraphStore.getState().graphsBySessionId[currentSessionId];
+    if (sessionBundleHasContent(cached)) {
+      return;
+    }
+
+    reconcileChatSessionGraphFromMessages(currentSessionId);
+  }, [currentSessionId, reconcileChatSessionGraphFromMessages]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -132,21 +171,20 @@ export default function EnhancedChatPage() {
       const savedGraphState = sessionStorage.getItem(`graphState_${targetSessionId}`);
       if (!savedGraphState) {
         const messages = useChatStore.getState().messagesBySession[targetSessionId] || [];
-        if (messages.length > 0) {
-          const lastAiMessage = [...messages]
-            .reverse()
-            .find((m) => m.role === 'assistant' && m.entities && m.entities.length > 0);
-          if (lastAiMessage) {
-            graphSyncService.updateFromSnapshot(
-              lastAiMessage.entities || [],
-              lastAiMessage.relations || [],
-              lastAiMessage.keywords || [],
-              targetSessionId,
-              lastAiMessage.id
-            );
-            if (import.meta.env.DEV) {
-              console.log('Restored graph state from last AI message');
-            }
+        const bundle = rebuildSessionGraphBundleFromMessages(messages);
+        if (sessionBundleHasContent(bundle)) {
+          graphSyncService.updateFromSnapshot(
+            bundle.entities,
+            bundle.relations,
+            bundle.keywords,
+            targetSessionId,
+            bundle.messageId ?? undefined
+          );
+          if (import.meta.env.DEV) {
+            console.log('Restored graph state from merged assistant messages', {
+              entities: bundle.entities.length,
+              relations: bundle.relations.length,
+            });
           }
         }
         return;
@@ -256,6 +294,8 @@ export default function EnhancedChatPage() {
           await switchSess(targetSessionId);
 
           if (!isMounted) return;
+
+          useGraphStore.getState().setActiveChatSession(targetSessionId);
 
           await restoreGraphState(targetSessionId);
         }
@@ -383,34 +423,6 @@ export default function EnhancedChatPage() {
       isStreaming: true,
     }),
     []
-  );
-
-  // ========== 辅助函数：更新图谱数据 ==========
-  const updateGraphData = useCallback(
-    (entities?: Entity[], keywords?: string[], sources?: Source[], relations?: Relation[]) => {
-      if (import.meta.env.DEV) {
-        console.log('🔵 updateGraphData 被调用:', {
-          entities: entities?.length || 0,
-          relations: relations?.length || 0,
-          keywords: keywords?.length || 0,
-        });
-      }
-
-      if (entities && entities.length > 0) {
-        graphSyncService.updateFromChat(
-          entities,
-          relations || [],
-          keywords || [],
-          currentSessionId || undefined,
-          undefined
-        );
-
-        if (import.meta.env.DEV) {
-          console.log('✅ graphSyncService.updateFromChat 已调用');
-        }
-      }
-    },
-    [currentSessionId]
   );
 
   // ========== 辅助函数：加载快照 ==========
@@ -594,11 +606,17 @@ export default function EnhancedChatPage() {
               });
               setNewMessageIds((prev) => new Set([...prev, streamingMsgId]));
 
-              const entities = aiMessage.entities || [];
-              const keywords = aiMessage.keywords || [];
-              const sources = aiMessage.sources || [];
-              const relations = aiMessage.relations || [];
-              updateGraphData(entities, keywords, sources, relations);
+              if (import.meta.env.DEV) {
+                console.log('🔵 助手消息图谱：从历史消息合并整图', {
+                  sessionId,
+                  messages: (
+                    useChatStore.getState().messagesBySession[sessionId]?.filter(
+                      (m) => m.role === 'assistant'
+                    ) ?? []
+                  ).length,
+                });
+              }
+              reconcileChatSessionGraphFromMessages(sessionId);
 
               setLoading(false);
               setStreaming(false);
@@ -639,7 +657,7 @@ export default function EnhancedChatPage() {
       setStreaming,
       setStreamingContent,
       setNewMessageIds,
-      updateGraphData,
+      reconcileChatSessionGraphFromMessages,
       toast,
       startTypewriterEffect,
       clearTypewriterEffect,
@@ -937,32 +955,34 @@ export default function EnhancedChatPage() {
     async (sid: string) => {
       if (sid === currentSessionId) return;
 
-      // 清空当前图谱数据
-      useGraphStore.getState().clearGraphData();
-
-      // 切换会话并等待消息加载完成
       await switchSession(sid);
+      useGraphStore.getState().setActiveChatSession(sid);
 
-      // 确保消息已加载，然后恢复图谱数据
+      const cachedBundle = useGraphStore.getState().graphsBySessionId[sid];
+      if (sessionBundleHasContent(cachedBundle)) {
+        if (import.meta.env.DEV) {
+          console.log('✅ 切换会话：使用本会话缓存的图谱', {
+            entities: cachedBundle.entities.length,
+            relations: cachedBundle.relations.length,
+          });
+        }
+        return;
+      }
+
       const newMessages = useChatStore.getState().messagesBySession[sid] || [];
-
-      // 查找最后一条包含实体数据的 AI 消息
-      const lastAiMessageWithEntities = [...newMessages]
-        .reverse()
-        .find((m) => m.role === 'assistant' && m.entities && m.entities.length > 0);
-
-      if (lastAiMessageWithEntities && lastAiMessageWithEntities.entities) {
-        graphSyncService.updateFromChat(
-          lastAiMessageWithEntities.entities,
-          lastAiMessageWithEntities.relations || [],
-          lastAiMessageWithEntities.keywords || [],
+      const bundle = rebuildSessionGraphBundleFromMessages(newMessages);
+      if (sessionBundleHasContent(bundle)) {
+        graphSyncService.updateFromSnapshot(
+          bundle.entities,
+          bundle.relations,
+          bundle.keywords,
           sid,
-          lastAiMessageWithEntities.id
+          bundle.messageId ?? undefined
         );
         if (import.meta.env.DEV) {
-          console.log('✅ 切换会话后自动恢复图谱数据:', {
-            entities: lastAiMessageWithEntities.entities.length,
-            relations: lastAiMessageWithEntities.relations?.length || 0,
+          console.log('✅ 切换会话：从历史消息合并回填图谱', {
+            entities: bundle.entities.length,
+            relations: bundle.relations.length,
           });
         }
       }
@@ -974,6 +994,7 @@ export default function EnhancedChatPage() {
     async (sid: string) => {
       try {
         await deleteSession(sid);
+        useGraphStore.getState().removeChatSessionGraph(sid);
         toast.success('已删除', '对话已删除');
       } catch (error) {
         const errorInfo = categorizeError(error);
@@ -1240,7 +1261,7 @@ export default function EnhancedChatPage() {
         entities={graphEntities}
         relations={graphRelations}
         sessionId={currentSessionId ?? undefined}
-        messageId={messages.length > 0 ? messages[messages.length - 1].id : undefined}
+        messageId={graphSnapshotMessageId ?? undefined}
         onKeywordClick={handleKeywordClick}
         onLoadSnapshot={handleLoadSnapshot}
       />

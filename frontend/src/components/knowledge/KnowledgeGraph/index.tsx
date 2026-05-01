@@ -10,7 +10,28 @@ import { GraphSkeleton } from '../../common/Skeleton';
 import { useToast } from '../../common/Toast';
 import { graphSyncService } from '../../../services/graphSyncService';
 import { getCategoryColor, getCategoryLabel } from '../../../constants/categories';
+import { formatRelationTypeLabel } from '../../../config';
 import type { Entity, RelationType } from '../../../types/graph';
+
+function escapeKgTooltip(unsafe: string): string {
+  return String(unsafe ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/** Chat/LLM 边可能用语义 ID 或用实体名称；用于友好展示 tooltip */
+function resolveNodeDisplayName(nodes: Array<{ id?: string; name?: string }>, ref: string): string {
+  const s = String(ref ?? '').trim();
+  if (!s) return '';
+  const byId = nodes.find((n) => String(n.id) === s);
+  if (byId?.name) return byId.name;
+  const byName = nodes.find((n) => n.name === s);
+  if (byName?.name) return byName.name;
+  return s;
+}
 
 export default function KnowledgeGraph() {
   const chartRef = useRef<HTMLDivElement>(null);
@@ -237,12 +258,16 @@ export default function KnowledgeGraph() {
     const validEdges = graphData.edges.filter(e => 
       validNodes.some(n => n.id === String(e.source)) && 
       validNodes.some(n => n.id === String(e.target))
-    ).map(e => {
+    ).map((e) => {
       const edgeOpacity = isFilterActive ? 0.15 : 0.5;
+      const ex = e as { relationType?: string; relation_type?: string };
+      const relType =
+        ex.relationType ?? ex.relation_type ?? ((e as { type?: string }).type as string | undefined);
       return {
         ...e,
         source: String(e.source),
         target: String(e.target),
+        relationType: relType,
         lineStyle: {
           color: '#9ca3af',
           width: 1.5,
@@ -254,7 +279,48 @@ export default function KnowledgeGraph() {
 
     const option = {
       backgroundColor: 'transparent',
-      tooltip: { show: true },
+      tooltip: {
+        show: true,
+        trigger: 'item',
+        confine: true,
+        formatter: (params: unknown) => {
+          const p = params as {
+            dataType?: string;
+            data?: Record<string, unknown>;
+          };
+          if (p.dataType === 'node' && p.data) {
+            const d = p.data;
+            const cat = String(d.category ?? 'unknown');
+            const typeLabel = getCategoryLabel(cat);
+            const name = escapeKgTooltip(String(d.name ?? ''));
+            const val = typeof d.value === 'number' ? (d.value as number).toFixed(2) : '';
+            return `
+              <div style="padding:10px;min-width:160px;">
+                <div style="font-weight:bold;font-size:14px;">${name}</div>
+                <div style="font-size:12px;margin-top:6px;opacity:.9;">类型：${escapeKgTooltip(typeLabel)}</div>
+                ${val ? `<div style="font-size:12px;margin-top:4px;opacity:.85;">关联度：${val}</div>` : ''}
+              </div>`;
+          }
+          if (p.dataType === 'edge' && p.data) {
+            const d = p.data;
+            const sid = String(d.source ?? '');
+            const tid = String(d.target ?? '');
+            const sName = escapeKgTooltip(resolveNodeDisplayName(graphData.nodes, sid));
+            const tName = escapeKgTooltip(resolveNodeDisplayName(graphData.nodes, tid));
+            const relRaw =
+              (d.relationType as string | undefined) ??
+              (d.type as string | undefined) ??
+              '';
+            const relLabel = escapeKgTooltip(formatRelationTypeLabel(relRaw));
+            return `
+              <div style="padding:10px;min-width:180px;">
+                <div style="font-weight:bold;margin-bottom:8px;font-size:14px;">${sName} → ${tName}</div>
+                <div style="font-size:12px;opacity:.9;">关系类型：${relLabel}</div>
+              </div>`;
+          }
+          return '';
+        },
+      },
       animation: true,
       animationDurationUpdate: 500, 
       series: [

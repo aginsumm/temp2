@@ -127,24 +127,35 @@ class SyncManager {
 
   private async processOperation(operation: PendingOperation): Promise<void> {
     const { type, data } = operation;
+    const id = String(data?.id ?? '');
+    const isTempSessionId = id.startsWith('session_');
+    const isTempMessageId = id.startsWith('msg_');
 
     switch (type) {
       case 'create_session':
+        // 本地临时会话 ID 不应直接同步到远端，避免 404 噪音
+        if (isTempSessionId) return;
         await apiAdapterManager.post('/session', data);
         break;
       case 'update_session':
+        if (isTempSessionId) return;
         await apiAdapterManager.put(`/session/${data.id}`, data);
         break;
       case 'delete_session':
+        if (isTempSessionId) return;
         await apiAdapterManager.delete(`/session/${data.id}`);
         break;
       case 'create_message':
+        // 流式过程中会产生本地占位消息，跳过远端同步
+        if (isTempMessageId || String(data?.session_id ?? '').startsWith('session_')) return;
         await apiAdapterManager.post('/chat/message', data);
         break;
       case 'update_message':
+        if (isTempMessageId) return;
         await apiAdapterManager.put(`/chat/message/${data.id}`, data);
         break;
       case 'delete_message':
+        if (isTempMessageId) return;
         await apiAdapterManager.delete(`/chat/message/${data.id}`);
         break;
       case 'create_entity':

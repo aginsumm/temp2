@@ -15,6 +15,22 @@ export default function ListView({ entities, onEntityClick, loading }: ListViewP
   // 【新增】：获取全局筛选状态
   const { filters } = useKnowledgeGraphStore();
 
+  const getEntityRegion = (entity: Entity) => {
+    const metadata = (entity.metadata || {}) as Record<string, unknown>;
+    if (entity.region) return entity.region;
+    if (typeof metadata.region === 'string') return metadata.region;
+    if (entity.type === 'region') return entity.name;
+    return '';
+  };
+
+  const getEntityPeriod = (entity: Entity) => {
+    const metadata = (entity.metadata || {}) as Record<string, unknown>;
+    if (entity.period) return entity.period;
+    if (typeof metadata.period === 'string') return metadata.period;
+    if (entity.type === 'period') return entity.name;
+    return '';
+  };
+
   // 【核心修改】：强大的多条件数据过滤引擎
   const visibleEntities = useMemo(() => {
     if (!entities) return [];
@@ -31,12 +47,14 @@ export default function ListView({ entities, onEntityClick, loading }: ListViewP
         filters.categories.includes(entity.type || (entity as any).category);
 
       // 3. 地区筛选 (使用 as any 兼容未在 Store 接口中声明的扩展字段)
-      const filterRegions = (filters as any).regions || [];
-      const matchesRegion = filterRegions.length === 0 || filterRegions.includes(entity.region);
+      const entityRegion = getEntityRegion(entity);
+      const filterRegions = filters.regions || [];
+      const matchesRegion = filterRegions.length === 0 || filterRegions.includes(entityRegion);
 
       // 4. 时期筛选
-      const filterPeriods = (filters as any).periods || [];
-      const matchesPeriod = filterPeriods.length === 0 || filterPeriods.includes(entity.period);
+      const entityPeriod = getEntityPeriod(entity);
+      const filterPeriods = filters.periods || [];
+      const matchesPeriod = filterPeriods.length === 0 || filterPeriods.includes(entityPeriod);
 
       // 5. 重要性筛选 (兼容后端传过来的不同字段名如 importance/relevance/value)
       const entityImportance = entity.importance ?? (entity as any).relevance ?? (entity as any).value ?? 0;

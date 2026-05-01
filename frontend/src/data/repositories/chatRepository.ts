@@ -2,6 +2,7 @@ import { localDatabase, STORES } from '../localDatabase';
 import type { ChatSession, ChatMessage } from '../models';
 import type { Session, Message, Entity, Source, Relation, ChatResponse } from '../../types/chat';
 import { entityExtractor, type ExtractedEntity } from '../../services/entityExtractor';
+import { ssePreferNonEmptyList } from '../../utils/sseGraphAccumulator';
 
 function generateId(): string {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
@@ -547,7 +548,7 @@ class ChatRepository {
   ): Promise<() => void> {
     let isAborted = false;
     const controller = new AbortController();
-    const STREAM_TIMEOUT = 60000; // 60秒超时
+    const STREAM_TIMEOUT = 180000; // 180秒总超时
     const MAX_RETRIES = 1; // 网络错误时重试1次
     let retryCount = 0;
 
@@ -557,7 +558,10 @@ class ChatRepository {
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = `Bearer ${token}`;
 
-        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+        const apiBaseUrl =
+          import.meta.env.VITE_API_BASE_URL ||
+          import.meta.env.VITE_API_URL ||
+          '/api/v1';
 
         onStatusChange?.('connecting');
 
@@ -606,13 +610,15 @@ class ChatRepository {
         let fullContent = '';
         let sseBuffer = '';
         let lastActivityTime = Date.now();
-        const ACTIVITY_TIMEOUT = 30000; // 30秒无活动超时
+        // 后端会在内容流结束后继续做实体/关键词/关系抽取，这段时间可能超过 30s。
+        // 放宽空闲超时，避免在抽取阶段误判流式失败，导致拿不到 complete 事件。
+        const ACTIVITY_TIMEOUT = 120000; // 120秒无活动超时
 
         if (reader) {
           while (!isAborted) {
             // 检查活动超时
             if (Date.now() - lastActivityTime > ACTIVITY_TIMEOUT) {
-              throw new Error('[STREAM_TIMEOUT] 流式响应超时，30秒无数据');
+              throw new Error('[STREAM_TIMEOUT] 流式响应超时，120秒无数据');
             }
 
             try {
@@ -698,9 +704,9 @@ class ChatRepository {
             content: lastResponse.content || fullContent || '',
             created_at: lastResponse.created_at || new Date().toISOString(),
             sources: lastResponse.sources || [],
-            entities: lastResponse.entities || latestEntities || [],
-            keywords: lastResponse.keywords || latestKeywords || [],
-            relations: lastResponse.relations || latestRelations || [],
+            entities: ssePreferNonEmptyList(lastResponse.entities, latestEntities),
+            keywords: ssePreferNonEmptyList(lastResponse.keywords, latestKeywords),
+            relations: ssePreferNonEmptyList(lastResponse.relations, latestRelations),
           };
           await this.addMessage(aiMessage);
           onStatusChange?.('complete');
@@ -776,7 +782,7 @@ class ChatRepository {
   ): Promise<() => void> {
     let isAborted = false;
     const controller = new AbortController();
-    const STREAM_TIMEOUT = 60000;
+    const STREAM_TIMEOUT = 180000;
     const MAX_RETRIES = 1;
     let retryCount = 0;
 
@@ -786,7 +792,10 @@ class ChatRepository {
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = `Bearer ${token}`;
 
-        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+        const apiBaseUrl =
+          import.meta.env.VITE_API_BASE_URL ||
+          import.meta.env.VITE_API_URL ||
+          '/api/v1';
 
         onStatusChange?.('connecting');
 
@@ -828,12 +837,12 @@ class ChatRepository {
         let fullContent = '';
         let sseBuffer = '';
         let lastActivityTime = Date.now();
-        const ACTIVITY_TIMEOUT = 30000;
+        const ACTIVITY_TIMEOUT = 120000;
 
         if (reader) {
           while (!isAborted) {
             if (Date.now() - lastActivityTime > ACTIVITY_TIMEOUT) {
-              throw new Error('[STREAM_TIMEOUT] 流式响应超时，30秒无数据');
+              throw new Error('[STREAM_TIMEOUT] 流式响应超时，120秒无数据');
             }
 
             try {

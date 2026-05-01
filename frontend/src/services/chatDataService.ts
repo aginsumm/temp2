@@ -55,7 +55,7 @@ interface UnifiedChatService {
   getFavoriteMessages: (page?: number, pageSize?: number) => Promise<Message[]>;
 }
 
-const STREAM_TIMEOUT = 60000;
+const STREAM_TIMEOUT = 180000;
 const MAX_RETRY_COUNT = 3;
 const RETRY_DELAY_BASE = 1000;
 

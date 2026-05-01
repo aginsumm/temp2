@@ -12,8 +12,9 @@ import type {
   Source,
   Relation,
 } from '../types/chat';
+import { ssePreferNonEmptyList } from '../utils/sseGraphAccumulator';
 
-const STREAM_TIMEOUT = 60000;
+const STREAM_TIMEOUT = 180000;
 
 function transformSession(data: Record<string, unknown>): Session {
   return {
@@ -126,7 +127,10 @@ export const chatApi = {
           headers['Authorization'] = `Bearer ${token}`;
         }
 
-        const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+        const baseUrl =
+          import.meta.env.VITE_API_BASE_URL ||
+          import.meta.env.VITE_API_URL ||
+          '/api/v1';
 
         const response = await fetch(`${baseUrl}/chat/stream`, {
           method: 'POST',
@@ -210,9 +214,9 @@ export const chatApi = {
                     content: data.content || accumulatedContent,
                     role: 'assistant',
                     sources: data.sources || [],
-                    entities: data.entities || latestEntities,
-                    keywords: data.keywords || latestKeywords,
-                    relations: data.relations || latestRelations,
+                    entities: ssePreferNonEmptyList(data.entities, latestEntities),
+                    keywords: ssePreferNonEmptyList(data.keywords, latestKeywords),
+                    relations: ssePreferNonEmptyList(data.relations, latestRelations),
                     created_at: new Date().toISOString(),
                   };
                 } else if (data.type === 'error') {

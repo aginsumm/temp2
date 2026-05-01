@@ -26,10 +26,20 @@ import { graphOptimizer } from '../../../utils/graphOptimizer';
 import { GraphSkeleton } from '../../common/Skeleton';
 import { useToast } from '../../common/Toast';
 import { useThemeStore } from '../../../stores/themeStore';
+import { formatRelationTypeLabel } from '../../../config';
+
+function escapeTooltipHtml(unsafe: string): string {
+  return unsafe
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 interface TooltipParams {
   dataType?: 'node' | 'edge';
-  data: GraphNode & { source?: string; target?: string };
+  data: GraphNode & { source?: string; target?: string; relationType?: string };
 }
 
 interface RenderSettings {
@@ -236,7 +246,21 @@ export default function WebGLRenderer({
               </div>
             `;
           } else if (p.dataType === 'edge') {
-            return `${p.data.source} → ${p.data.target}${p.data.relationType ? ` (${p.data.relationType})` : ''}`;
+            const nameById = new Map(graphData.nodes.map((n) => [n.id, n.name]));
+            const sId = String(p.data.source ?? '');
+            const tId = String(p.data.target ?? '');
+            const sName = escapeTooltipHtml(nameById.get(sId) || sId);
+            const tName = escapeTooltipHtml(nameById.get(tId) || tId);
+            const relLabel = escapeTooltipHtml(
+              formatRelationTypeLabel(String(p.data.relationType ?? ''))
+            );
+            const muted = getCSSVariable('--color-text-muted');
+            return `
+              <div style="padding: 8px;">
+                <div style="font-weight: bold; margin-bottom: 4px;">${sName} → ${tName}</div>
+                <div style="font-size: 12px; color: ${muted};">关系类型：${relLabel}</div>
+              </div>
+            `;
           }
           return '';
         },

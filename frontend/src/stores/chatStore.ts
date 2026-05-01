@@ -181,6 +181,17 @@ const pruneSessions = (sessions: Session[]): Session[] => {
   return [...pinned, ...unpinned];
 };
 
+const isTemporaryMessageId = (messageId: string): boolean => {
+  // Frontend-local optimistic ids (e.g. msg_..._assistant_streaming) are not valid backend ids.
+  return messageId.startsWith('msg_') || messageId.endsWith('_streaming');
+};
+
+const shouldSyncMessageUpdate = (messageId: string, updates: Partial<Message>): boolean => {
+  if (updates.isStreaming === true) return false;
+  if (isTemporaryMessageId(messageId)) return false;
+  return true;
+};
+
 export const useChatStore = create<ChatState>()(
   persist(
     (set, get) => ({
@@ -514,7 +525,7 @@ export const useChatStore = create<ChatState>()(
 
         await chatRepository.updateMessage(id, updates);
 
-        if (apiAdapterManager.shouldUseRemote()) {
+        if (apiAdapterManager.shouldUseRemote() && shouldSyncMessageUpdate(id, updates)) {
           syncManager.addOperation('update_message', { id, ...updates }).catch((err) => {
             console.error('Failed to sync update_message:', err);
           });

@@ -16,10 +16,37 @@ export default function UserCenter() {
   const identity = user?.is_active ? '非遗数字创作者' : '离线测试账号';
   
   // 3. 处理头像 URL (适配相对路径和绝对路径)
-  const API_BASE_URL = "http://localhost:8000";
-  const avatarUrl = user?.avatar?.startsWith('http') 
-    ? user.avatar 
-    : user?.avatar ? `${API_BASE_URL}/${user.avatar.replace(/^\//, '')}` : null;
+  const API_BASE_URL =
+    import.meta.env.VITE_API_URL?.replace(/\/api\/v1\/?$/, '') ||
+    import.meta.env.VITE_API_BASE_URL?.replace(/\/api\/v1\/?$/, '') ||
+    window.location.origin;
+  const normalizeAvatarUrl = (rawUrl) => {
+    if (!rawUrl) return null;
+    if (!rawUrl.startsWith('http')) {
+      return `${API_BASE_URL}/${rawUrl.replace(/^\//, '')}`;
+    }
+
+    try {
+      const parsed = new URL(rawUrl);
+      const isLoopbackHost =
+        parsed.hostname === 'localhost' ||
+        parsed.hostname === '127.0.0.1' ||
+        parsed.hostname === '::1';
+
+      if (!isLoopbackHost) {
+        return rawUrl;
+      }
+
+      const serverBase = new URL(API_BASE_URL);
+      parsed.protocol = serverBase.protocol;
+      parsed.host = serverBase.host;
+      return parsed.toString();
+    } catch {
+      return rawUrl;
+    }
+  };
+
+  const avatarUrl = normalizeAvatarUrl(user?.avatar);
 
   // --- 处理文件上传核心逻辑 ---
   const handleFileChange = async (event) => {

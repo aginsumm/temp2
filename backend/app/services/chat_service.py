@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, desc
 from sqlalchemy.orm import selectinload
@@ -218,6 +218,32 @@ class MessageService:
             messages = messages[:page_size]
         
         return messages, total, has_more
+
+    async def get_recent_session_messages(
+        self,
+        session_id: str,
+        limit: int = 60,
+        exclude_message_ids: Optional[Sequence[str]] = None,
+    ) -> list[Message]:
+        """最近若干条消息（时间正序），用于会话级图谱实体对齐。默认不含 selectinload relations。"""
+        stmt = (
+            select(Message)
+            .options(selectinload(Message.entities))
+            .where(Message.session_id == session_id)
+        )
+        if exclude_message_ids:
+            stmt = stmt.where(Message.id.not_in(list(exclude_message_ids)))
+        stmt = stmt.order_by(Message.created_at.desc()).limit(limit)
+        result = await self.db.execute(stmt)
+        rows = list(result.scalars().all())
+        rows.reverse()
+        return rows
+
+    async def get_messages_by_session(
+        self, session_id: str, page: int = 1, page_size: int = 100
+    ) -> list[Message]:
+        messages, _, _ = await self.get_session_messages(session_id, page, page_size)
+        return messages
 
     async def get_message(self, message_id: str) -> Optional[Message]:
         result = await self.db.execute(

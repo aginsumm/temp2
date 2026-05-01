@@ -29,6 +29,8 @@ interface FilterState {
     searchQuery: string;
     categories: string[];
     minImportance: number;
+    regions: string[];
+    periods: string[];
   };
 }
 
@@ -94,6 +96,8 @@ const useKnowledgeGraphStore = create<KnowledgeGraphStore>()(
         searchQuery: '',
         categories: [],
         minImportance: 0,
+        regions: [],
+        periods: [],
       },
 
       setViewMode: (mode) => set({ viewMode: mode }),
@@ -138,6 +142,8 @@ const useKnowledgeGraphStore = create<KnowledgeGraphStore>()(
             searchQuery: '',
             categories: [],
             minImportance: 0,
+            regions: [],
+            periods: [],
           },
         }),
 

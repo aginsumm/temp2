@@ -1,20 +1,25 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { GraphSyncService, SyncEventType, SyncSource } from '../graphSyncService';
 import { graphDataHub } from '../graphDataHub';
+import { useGraphStore } from '../../stores/graphStore';
+
+async function flushGraphSyncDebounce(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(200);
+}
 
 describe('GraphSyncService', () => {
   let service: GraphSyncService;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     service = GraphSyncService.getInstance();
     graphDataHub.clear();
-    // 重置监听器
+    useGraphStore.getState().clearGraphData();
     (service as unknown as { listeners: Map<string, Set<() => void>> }).listeners.clear();
   });
 
   afterEach(() => {
-    // 不清除，避免影响其他测试
-    // service.destroy();
+    vi.useRealTimers();
   });
 
   describe('Singleton Pattern', () => {
@@ -26,21 +31,22 @@ describe('GraphSyncService', () => {
   });
 
   describe('Listener Management', () => {
-    it('should add and remove listeners', () => {
+    it('should add and remove listeners', async () => {
       const mockListener = vi.fn();
       const cleanup = service.addListener('test-module', mockListener);
 
-      expect(() => {
-        service.updateFromChat([], [], []);
-      }).not.toThrow();
+      service.updateFromChat([], [], []);
+      await flushGraphSyncDebounce();
 
       cleanup();
 
       service.updateFromChat([], [], []);
+      await flushGraphSyncDebounce();
+
       expect(mockListener).toHaveBeenCalledTimes(1);
     });
 
-    it('should notify all listeners for a module', () => {
+    it('should notify all listeners for a module', async () => {
       const mockListener1 = vi.fn();
       const mockListener2 = vi.fn();
 
@@ -48,114 +54,96 @@ describe('GraphSyncService', () => {
       service.addListener('test-module', mockListener2);
 
       service.updateFromChat([], [], []);
+      await flushGraphSyncDebounce();
 
       expect(mockListener1).toHaveBeenCalled();
       expect(mockListener2).toHaveBeenCalled();
     });
 
-    it('should handle listener errors gracefully', () => {
+    it('should handle listener errors gracefully', async () => {
       const errorListener = () => {
         throw new Error('Test error');
       };
 
       service.addListener('test-module', errorListener);
 
-      expect(() => {
-        service.updateFromChat([], [], []);
-      }).not.toThrow();
+      service.updateFromChat([], [], []);
+      await flushGraphSyncDebounce();
     });
   });
 
   describe('updateFromChat', () => {
-    it('should update graph data from Chat module', () => {
+    it('should update graphStore for a session bucket and mirror display', () => {
       const entities = [{ id: '1', name: 'Entity1', type: 'inheritor' as const }];
       const relations: { id: string; source: string; target: string; type: string }[] = [];
       const keywords = ['keyword1'];
 
       service.updateFromChat(entities, relations, keywords, 'session-1', 'message-1');
 
-      const state = graphDataHub.getCurrentState();
-      expect(state).toBeTruthy();
-      expect(state?.entities).toEqual(entities);
-      expect(state?.source).toBe('chat');
-      expect(state?.sessionId).toBe('session-1');
+      const gs = useGraphStore.getState();
+      expect(gs.graphsBySessionId['session-1']?.entities).toEqual(entities);
+      expect(gs.entities).toEqual(entities);
+      expect(gs.sessionId).toBe('session-1');
+      expect(gs.source).toBe('chat');
     });
 
-    it('should dispatch custom event', () => {
-      const mockDispatchEvent = vi.spyOn(window, 'dispatchEvent');
+    it('should keep session A graph when updating session B while A is active', () => {
+      const aEntity = { id: 'a', name: 'A', type: 'inheritor' as const };
+      const bEntity = { id: 'b', name: 'B', type: 'heritage' as const };
 
-      service.updateFromChat([], [], []);
+      service.updateFromChat([aEntity], [], [], 'session-a', 'm1');
+      useGraphStore.getState().setActiveChatSession('session-a');
 
-      expect(mockDispatchEvent).toHaveBeenCalled();
-      const event = mockDispatchEvent.mock.calls[0][0] as CustomEvent;
-      expect(event.type).toBe('chatGraphUpdate');
+      service.updateFromChat([bEntity], [], [], 'session-b', 'm2');
 
-      mockDispatchEvent.mockRestore();
+      expect(useGraphStore.getState().graphsBySessionId['session-a']?.entities).toEqual([
+        aEntity,
+      ]);
+      expect(useGraphStore.getState().graphsBySessionId['session-b']?.entities).toEqual([
+        bEntity,
+      ]);
+      const top = useGraphStore.getState().entities;
+      expect(top.some((e) => e.id === 'a')).toBe(true);
+      expect(top.some((e) => e.id === 'b')).toBe(false);
     });
   });
 
   describe('updateFromKnowledge', () => {
-    it('should update graph data from Knowledge module', () => {
+    it('should replace displayed graph with knowledge source', () => {
       const entities = [{ id: '1', name: 'Entity1', type: 'inheritor' as const }];
       const relations: { id: string; source: string; target: string; type: string }[] = [];
       const keywords = ['keyword1'];
 
       service.updateFromKnowledge(entities, relations, keywords);
 
-      const state = graphDataHub.getCurrentState();
-      expect(state).toBeTruthy();
-      expect(state?.entities).toEqual(entities);
-      expect(state?.source).toBe('knowledge');
-    });
-
-    it('should dispatch custom event', () => {
-      const mockDispatchEvent = vi.spyOn(window, 'dispatchEvent');
-
-      service.updateFromKnowledge([], [], []);
-
-      expect(mockDispatchEvent).toHaveBeenCalled();
-      const event = mockDispatchEvent.mock.calls[0][0] as CustomEvent;
-      expect(event.type).toBe('knowledgeGraphUpdate');
-
-      mockDispatchEvent.mockRestore();
+      const gs = useGraphStore.getState();
+      expect(gs.entities).toEqual(entities);
+      expect(gs.source).toBe('knowledge');
     });
   });
 
   describe('updateFromSnapshot', () => {
-    it('should update graph data from snapshot', () => {
+    it('should replace session bucket when sessionId is set', () => {
       const entities = [{ id: '1', name: 'Entity1', type: 'inheritor' as const }];
       const relations: { id: string; source: string; target: string; type: string }[] = [];
       const keywords = ['keyword1'];
 
       service.updateFromSnapshot(entities, relations, keywords, 'session-1', 'message-1');
 
-      const state = graphDataHub.getCurrentState();
-      expect(state).toBeTruthy();
-      expect(state?.source).toBe('snapshot');
-      expect(state?.sessionId).toBe('session-1');
-    });
-
-    it('should dispatch loadSnapshot event', () => {
-      const mockDispatchEvent = vi.spyOn(window, 'dispatchEvent');
-
-      service.updateFromSnapshot([], [], [], 'session-1', 'message-1');
-
-      expect(mockDispatchEvent).toHaveBeenCalled();
-      const event = mockDispatchEvent.mock.calls[0][0] as CustomEvent;
-      expect(event.type).toBe('loadSnapshot');
-      expect(event.detail.snapshot.session_id).toBe('session-1');
-
-      mockDispatchEvent.mockRestore();
+      const gs = useGraphStore.getState();
+      expect(gs.graphsBySessionId['session-1']?.entities).toEqual(entities);
+      expect(gs.graphsBySessionId['session-1']?.keywords).toEqual(keywords);
     });
   });
 
   describe('subscribe', () => {
-    it('should subscribe to graph updates', () => {
+    it('should subscribe to graph updates', async () => {
       const mockCallback = vi.fn();
 
       const unsubscribe = service.subscribe('test-module', mockCallback);
 
       service.updateFromChat([{ id: '1', name: 'Entity1', type: 'inheritor' as const }], [], []);
+      await flushGraphSyncDebounce();
 
       expect(mockCallback).toHaveBeenCalled();
       expect(mockCallback.mock.calls[0][0].entities.length).toBe(1);
@@ -163,13 +151,13 @@ describe('GraphSyncService', () => {
       unsubscribe();
     });
 
-    it('should filter out updates from the same module', () => {
+    it('should filter out updates from the same module', async () => {
       const mockCallback = vi.fn();
 
-      // 使用 'chat' 作为 moduleId，这样会被过滤
       const unsubscribe = service.subscribe('chat', mockCallback);
 
       service.updateFromChat([], [], []);
+      await flushGraphSyncDebounce();
 
       expect(mockCallback).not.toHaveBeenCalled();
 
@@ -181,7 +169,7 @@ describe('GraphSyncService', () => {
     it('should return current graph state', () => {
       const entities = [{ id: '1', name: 'Entity1', type: 'inheritor' as const }];
 
-      service.updateFromChat(entities, [], []);
+      service.updateFromChat(entities, [], [], 's1', 'm1');
 
       const state = service.getCurrentState();
       expect(state).toBeTruthy();
@@ -189,6 +177,7 @@ describe('GraphSyncService', () => {
     });
 
     it('should return null when no state', () => {
+      useGraphStore.getState().clearGraphData();
       const state = service.getCurrentState();
       expect(state).toBeNull();
     });
@@ -196,12 +185,13 @@ describe('GraphSyncService', () => {
 
   describe('clear', () => {
     it('should clear graph data', () => {
-      service.updateFromChat([{ id: '1', name: 'Entity1', type: 'inheritor' as const }], [], []);
+      service.updateFromChat([{ id: '1', name: 'Entity1', type: 'inheritor' as const }], [], [], 's1');
 
       service.clear();
 
       const state = service.getCurrentState();
       expect(state).toBeNull();
+      expect(Object.keys(useGraphStore.getState().graphsBySessionId)).toHaveLength(0);
     });
 
     it('should notify listeners of clear event', () => {

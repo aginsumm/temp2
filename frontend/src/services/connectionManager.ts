@@ -51,7 +51,10 @@ const HEALTH_PATH = '/api/v1/health';
 
 function resolveHealthCheckUrl(rawBase: string): string {
   // 如果是相对路径，添加默认主机
-  const baseUrl = rawBase.startsWith('http') ? rawBase : `http://localhost:8000${rawBase}`;
+  const baseUrl =
+    rawBase.startsWith('http')
+      ? rawBase
+      : `${import.meta.env.VITE_API_URL || window.location.origin}${rawBase}`;
 
   const normalized = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
 
@@ -63,7 +66,7 @@ function resolveHealthCheckUrl(rawBase: string): string {
   // 如果以 /health 结尾但不是 /api/v1/health，说明配置错误，需要修正
   if (normalized.endsWith('/health')) {
     console.warn(
-      '⚠️ 检测到 VITE_HEALTH_CHECK_URL 配置错误，应该是 http://localhost:8000/api/v1 或 http://localhost:8000/api/v1/health'
+      '⚠️ 检测到 VITE_HEALTH_CHECK_URL 配置错误，应该是 VITE_API_BASE_URL/VITE_API_URL 对应的 /api/v1 或 /api/v1/health'
     );
     // 尝试修正：去掉 /health，添加 /api/v1/health
     const baseWithoutHealth = normalized.slice(0, -'/health'.length);
@@ -90,7 +93,10 @@ function resolveHealthCheckUrl(rawBase: string): string {
 }
 
 const HEALTH_CHECK_BASE_URL = resolveHealthCheckUrl(
-  import.meta.env.VITE_HEALTH_CHECK_URL || 'http://localhost:8000/api/v1'
+  import.meta.env.VITE_HEALTH_CHECK_URL ||
+    import.meta.env.VITE_API_BASE_URL ||
+    import.meta.env.VITE_API_URL ||
+    '/api/v1'
 );
 
 class OfflineQueue {

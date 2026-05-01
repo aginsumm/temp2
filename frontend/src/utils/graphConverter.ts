@@ -51,16 +51,26 @@ export function calculateNodeSize(relevance: number, minSize = 20, maxSize = 50)
  * 实体去重和合并
  * 基于名称和类型合并相同实体，保留最高的 relevance/importance
  */
-function deduplicateEntities(entities: Entity[]): Entity[] {
+function deduplicateEntitiesWithRemap(entities: Entity[]): {
+  entities: Entity[];
+  idRemap: Map<string, string>;
+} {
   const entityMap = new Map<string, Entity>();
+  const idRemap = new Map<string, string>();
 
   entities.forEach((entity) => {
     const key = `${entity.name.toLowerCase().trim()}_${entity.type}`;
     const existing = entityMap.get(key);
 
     if (!existing) {
-      entityMap.set(key, entity);
+      const normalized = { ...entity, id: String(entity.id) };
+      entityMap.set(key, normalized);
     } else {
+      const curId = String(entity.id);
+      const keptId = String(existing.id);
+      if (curId !== keptId) {
+        idRemap.set(curId, keptId);
+      }
       // 合并：保留更高的 relevance/importance
       if (entity.description && !existing.description) {
         existing.description = entity.description;
@@ -78,7 +88,10 @@ function deduplicateEntities(entities: Entity[]): Entity[] {
     }
   });
 
-  return Array.from(entityMap.values());
+  return {
+    entities: Array.from(entityMap.values()),
+    idRemap,
+  };
 }
 
 /**
@@ -121,8 +134,24 @@ export function entitiesToGraphData(
   }
 ): GraphData {
   // 先去重
-  const uniqueEntities = deduplicateEntities(entities);
-  const uniqueRelations = deduplicateRelations(relations);
+  const { entities: uniqueEntities, idRemap } = deduplicateEntitiesWithRemap(entities);
+
+  const resolveId = (id: string): string => {
+    let cur = String(id);
+    const seen = new Set<string>();
+    while (idRemap.has(cur) && !seen.has(cur)) {
+      seen.add(cur);
+      cur = idRemap.get(cur)!;
+    }
+    return cur;
+  };
+
+  const remappedRelations = relations.map((relation) => ({
+    ...relation,
+    source: resolveId(String(relation.source)),
+    target: resolveId(String(relation.target)),
+  }));
+  const uniqueRelations = deduplicateRelations(remappedRelations);
 
   // 过滤实体
   let filteredEntities = uniqueEntities;
@@ -142,7 +171,7 @@ export function entitiesToGraphData(
     // 优先使用 importance 字段（Knowledge 模块），否则使用 relevance（Chat 模块）
     const relevance = entity.importance ?? entity.relevance ?? 0.5;
     const node: GraphNode = {
-      id: entity.id,
+      id: String(entity.id),
       name: entity.name,
       category: entity.type,
       symbolSize: calculateNodeSize(relevance),
@@ -176,14 +205,16 @@ export function entitiesToGraphData(
 
   // 转换关系
   const edges: GraphEdge[] = [];
-  const entityIds = new Set(filteredEntities.map((e) => e.id));
+  const entityIds = new Set(filteredEntities.map((e) => String(e.id)));
 
   uniqueRelations.forEach((relation, index) => {
-    if (entityIds.has(relation.source) && entityIds.has(relation.target)) {
+    const source = String(relation.source);
+    const target = String(relation.target);
+    if (entityIds.has(source) && entityIds.has(target)) {
       edges.push({
         id: relation.id || `edge_${index}`,
-        source: relation.source,
-        target: relation.target,
+        source,
+        target,
         relationType: relation.type,
         value: relation.confidence || 0.5,
         lineStyle: {

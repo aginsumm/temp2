@@ -22,7 +22,9 @@ function resolveHealthUrl(baseUrl: string): string {
 
   // 如果以 /health 结尾但不是 /api/v1/health，说明配置错误，需要修正
   if (normalized.endsWith('/health')) {
-    console.warn('⚠️ 检测到 API 基础 URL 配置错误，应该是 /api/v1 或 http://localhost:8000/api/v1');
+    console.warn(
+      '⚠️ 检测到 API 基础 URL 配置错误，应该是 /api/v1 或 VITE_API_BASE_URL/VITE_API_URL 对应的 /api/v1 地址'
+    );
     const baseWithoutHealth = normalized.slice(0, -'/health'.length);
     return `${baseWithoutHealth}${HEALTH_PATH}`;
   }
@@ -47,7 +49,8 @@ function resolveHealthUrl(baseUrl: string): string {
 }
 
 class ApiAdapterManager {
-  private baseUrl: string = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+  private baseUrl: string =
+    import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '/api/v1';
   private defaultTimeout: number = 30000;
   private connectionMode: ConnectionMode = 'offline';
   private listeners: Set<NetworkStatusListener> = new Set();

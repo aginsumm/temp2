@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as echarts from 'echarts';
 import {
@@ -17,7 +17,15 @@ import { snapshotService } from '../../../api/snapshot';
 import { useToast } from '../../common/Toast';
 import { useThemeStore } from '../../../stores/themeStore';
 import { CATEGORY_COLORS, CATEGORY_LABELS } from '../../../constants/categories';
-import type { Entity, Relation, GraphNode, EntityType } from '../../../types/graph';
+import { formatRelationTypeLabel } from '../../../config';
+import type {
+  Entity,
+  Relation,
+  GraphNode,
+  EntityType,
+  GraphCategory,
+  GraphData,
+} from '../../../types/graph';
 
 const ENTITY_LABELS: Record<EntityType, string> = CATEGORY_LABELS;
 
@@ -85,35 +93,126 @@ export default function DynamicGraphPanel({
 
   const toast = useToast();
 
-  const graphData = useMemo(() => {
+  const graphData: GraphData = useMemo(() => {
     if (entities.length === 0) {
-      return { nodes: [], edges: [] };
+      return { nodes: [], edges: [], categories: [] };
     }
-    return graphService.entitiesToGraphData(entities, relations, {
-      maxNodes: 50,
-      minRelevance: 0.3,
-    });
+    // Chat 场景不过滤 relevance（后端常为 undefined 或较低，0.3 会导致「根本没图」）
+    return graphService.entitiesToGraphData(entities, relations);
   }, [entities, relations]);
+
+  /** ECharts graph 必须用 categories + 数值 category；缺少时邻接聚焦会写坏 dataIndex */
+  const categoriesForSeries: GraphCategory[] = useMemo(() => {
+    if (graphData.categories && graphData.categories.length > 0) {
+      return graphData.categories;
+    }
+    const types = [...new Set(graphData.nodes.map((n) => n.category))];
+    return types.map((name) => ({
+      name,
+      itemStyle: { color: getExactHexColor(String(name)) },
+    }));
+  }, [graphData.categories, graphData.nodes]);
+
+  const categoryIndexMap = useMemo(() => {
+    const m = new Map<string, number>();
+    categoriesForSeries.forEach((c, i) => m.set(String(c.name), i));
+    return m;
+  }, [categoriesForSeries]);
+
+  /**
+   * 防御性清洗：关系里若引用了当前节点集不存在的端点，ECharts graph 在构建
+   * dataIndex 时可能报 `Cannot set properties of undefined`。
+   */
+  const safeSeriesData = useMemo(
+    () =>
+      graphData.nodes.map((node) => {
+        const isSelected = selectedNode?.id === node.id;
+        const color = getExactHexColor(String(node.category));
+        const catIdx = categoryIndexMap.get(String(node.category)) ?? 0;
+
+        return {
+          id: String(node.id),
+          name: node.name?.trim() || '未命名',
+          category: catIdx,
+          entityType: node.category,
+          value: node.value ?? 0.5,
+          symbolSize: node.symbolSize || 30,
+          description: node.description,
+          itemStyle: {
+            color,
+            borderColor: isSelected ? '#fbbf24' : 'transparent',
+            borderWidth: isSelected ? 3 : 0,
+            shadowBlur: 15,
+            shadowColor: color,
+            shadowOffsetX: 0,
+            shadowOffsetY: 0,
+          },
+          label: {
+            show: true,
+            position: 'bottom',
+            distance: 8,
+            formatter: '{b}',
+            fontSize: 13,
+            color: resolvedMode === 'dark' ? '#e2e8f0' : '#1e293b',
+            fontWeight: 500 as const,
+            textShadowColor:
+              resolvedMode === 'dark'
+                ? 'rgba(0, 0, 0, 0.8)'
+                : 'rgba(255, 255, 255, 0.8)',
+            textShadowBlur: 6,
+          },
+        };
+      }),
+    [graphData.nodes, selectedNode, categoryIndexMap, resolvedMode]
+  );
+
+  const safeSeriesLinks = useMemo(() => {
+    const nodeIdSet = new Set(safeSeriesData.map((n) => String(n.id)));
+    return graphData.edges
+      .filter((edge) => {
+        const source = String(edge.source);
+        const target = String(edge.target);
+        return nodeIdSet.has(source) && nodeIdSet.has(target);
+      })
+      .map((edge) => ({
+        source: String(edge.source),
+        target: String(edge.target),
+        relationType: edge.relationType,
+        lineStyle: {
+          color: edge.lineStyle?.color || '#94a3b8',
+          width: edge.lineStyle?.width || 2,
+          curveness: edge.lineStyle?.curveness ?? 0.3,
+          opacity: edge.lineStyle?.opacity ?? 0.5,
+        },
+      }));
+  }, [graphData.edges, safeSeriesData]);
 
   const stats = useMemo(() => {
     return graphService.calculateGraphStats(graphData);
   }, [graphData]);
 
-  const renderGraph = useCallback(() => {
-    if (!chartInstance.current || graphData.nodes.length === 0) return;
+  /** 同步更新图表（避免 RAF 被取消导致永远不画、以及与力导向/layout 异步更新打架） */
+  const applyChartOption = useCallback((layoutMode: 'force' | 'circular' = 'force') => {
+    const el = chartRef.current;
+    if (!el || graphData.nodes.length === 0) return;
 
     const isDark = resolvedMode === 'dark';
     const textColor = isDark ? '#e2e8f0' : '#1e293b';
     const bgColor = 'transparent';
     const borderColor = isDark ? '#334155' : '#e2e8f0';
 
+    let chart = chartInstance.current;
+    if (!chart) {
+      chart = echarts.init(el, undefined, { renderer: 'canvas' });
+      chartInstance.current = chart;
+    }
+
     const option: echarts.EChartsOption = {
       backgroundColor: bgColor,
       tooltip: {
         trigger: 'item',
-        // 【核心修改】：这两个属性突破侧边栏限制
-        appendToBody: true, // 挂载到全局 body 上，无视父级的 overflow:hidden
-        confine: true,      // 强制在浏览器视口内，防止被屏幕边缘切掉
+        appendToBody: true,
+        confine: true,
         backgroundColor: isDark ? '#1e293b' : '#ffffff',
         borderColor: borderColor,
         borderWidth: 2,
@@ -125,12 +224,11 @@ export default function DynamicGraphPanel({
           const param = params as Record<string, unknown>;
           if (param.dataType === 'node' && param.data) {
             const data = param.data as Record<string, unknown>;
-            const category = data.category as EntityType;
+            const category = String(data.entityType ?? data.category ?? 'technique') as EntityType;
             const color = getExactHexColor(category);
             const value = (data.value as number) ?? 0.5;
             const name = escapeHtml(String(data.name || ''));
             const description = data.description as string | undefined;
-            // 【修改】：给 tooltip 加上 max-width 和 white-space 保证文字自动换行
             return `
               <div style="padding: 12px; min-width: 200px; max-width: 320px; white-space: normal; word-wrap: break-word;">
                 <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
@@ -149,104 +247,71 @@ export default function DynamicGraphPanel({
             `;
           }
           const data = param.data as Record<string, unknown> | undefined;
-          const source = escapeHtml(String(data?.source || ''));
-          const target = escapeHtml(String(data?.target || ''));
-          const relationType = escapeHtml(String(data?.relationType || '关联'));
+          const sid = String(data?.source ?? '');
+          const tid = String(data?.target ?? '');
+          const srcEntity = entities.find((e) => e.id === sid);
+          const tgtEntity = entities.find((e) => e.id === tid);
+          const source = escapeHtml(srcEntity?.name || sid || '');
+          const target = escapeHtml(tgtEntity?.name || tid || '');
+          const relationLabel = escapeHtml(formatRelationTypeLabel(String(data?.relationType ?? '')));
           return `
             <div style="padding: 12px; min-width: 150px; max-width: 300px; white-space: normal;">
               <div style="color: var(--color-primary); font-size: 14px; margin-bottom: 8px;">
                 ${source} → ${target}
               </div>
               <div style="color: var(--color-text-muted); font-size: 13px;">
-                <span style="color: var(--color-text-secondary);">关系:</span>
-                <span style="color: var(--color-success); font-weight: bold;">${relationType}</span>
+                <span style="color: var(--color-text-secondary);">关系类型：</span>
+                <span style="color: var(--color-success); font-weight: bold;">${relationLabel}</span>
               </div>
             </div>
           `;
         },
       },
-      animationDuration: 1500,
-      animationEasingUpdate: 'quinticInOut',
+      animation: layoutMode === 'force',
+      animationDuration: layoutMode === 'force' ? 400 : 0,
+      animationDurationUpdate: layoutMode === 'force' ? 300 : 0,
       series: [
         {
           type: 'graph',
-          layout: 'force',
-          data: graphData.nodes.map((node) => {
-            const isSelected = selectedNode?.id === node.id;
-            const color = getExactHexColor(node.category);
-
-            return {
-              ...node,
-              symbolSize: node.symbolSize || 30,
-              itemStyle: {
-                ...node.itemStyle,
-                color: color,
-                // 【修复】：去除常驻黑边，选中时才显示高亮圆环
-                borderColor: isSelected ? 'var(--color-warning)' : 'transparent',
-                borderWidth: isSelected ? 3 : 0,
-                shadowBlur: 15,
-                shadowColor: color,
-                shadowOffsetX: 0,
-                shadowOffsetY: 0,
-              },
-              label: {
-                show: true,
-                position: 'bottom',
-                distance: 8,
-                formatter: '{b}',
-                fontSize: 13,
-                color: textColor,
-                fontWeight: 500 as const,
-                textShadowColor: isDark ? 'rgba(0, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.8)',
-                textShadowBlur: 6,
-              },
-            };
-          }),
-          links: graphData.edges.map((edge) => ({
-            source: edge.source,
-            target: edge.target,
-            lineStyle: {
-              color: edge.lineStyle?.color || 'var(--color-border)',
-              width: edge.lineStyle?.width || 2,
-              curveness: 0.3,
-              opacity: 0.5,
+          layout: layoutMode,
+          categories: categoriesForSeries.map((c) => ({
+            name: String(c.name),
+            itemStyle: {
+              color: getExactHexColor(String(c.name)),
             },
           })),
+          data: safeSeriesData,
+          links: safeSeriesLinks,
           roam: true,
           draggable: true,
-          focusNodeAdjacency: true,
-          force: {
-            repulsion: 1500,
-            edgeLength: [100, 200],
-            gravity: 0.1,
-            friction: 0.6,
-            layoutAnimation: true,
-          },
+          focusNodeAdjacency: false,
+          force:
+            layoutMode === 'force'
+              ? {
+                  repulsion: 1500,
+                  edgeLength: [100, 200],
+                  gravity: 0.1,
+                  friction: 0.6,
+                  layoutAnimation: false,
+                }
+              : undefined,
           emphasis: {
-            focus: 'adjacency',
-            lineStyle: {
-              width: 5,
-              color: 'var(--color-primary)',
-            },
+            focus: 'none',
             itemStyle: {
-              shadowBlur: 40,
-              shadowColor: 'var(--color-shadow-glow)',
+              shadowBlur: 28,
+              shadowColor: 'rgba(251, 191, 36, 0.45)',
+            },
+            lineStyle: {
+              width: 4,
+              opacity: 0.85,
             },
             label: {
-              fontSize: 16,
+              fontSize: 14,
               fontWeight: 'bold',
             },
           },
-          blur: {
-            itemStyle: {
-              opacity: 0.3,
-            },
-            lineStyle: {
-              opacity: 0.1,
-            },
-          },
           lineStyle: {
-            color: 'var(--color-border)',
+            color: '#94a3b8',
             curveness: 0.3,
             opacity: 0.5,
           },
@@ -254,35 +319,39 @@ export default function DynamicGraphPanel({
       ],
     };
 
-    chartInstance.current.setOption(option, true);
+    chart.resize();
+    // 仅用 notMerge，避免 replaceMerge + notMerge 在部分版本下图状态异常
+    chart.setOption(option, true);
 
-    chartInstance.current.off('click');
-    chartInstance.current.on('click', (params: Record<string, unknown>) => {
+    chart.off('click');
+    chart.on('click', (params: Record<string, unknown>) => {
       if (params.dataType === 'node') {
         const data = params.data as Record<string, unknown>;
-        const entity = entities.find((e) => e.id === data.id);
+        const entityType = String(data.entityType ?? 'technique') as EntityType;
+        const entity = entities.find((e) => e.id === String(data.id));
         if (entity && onNodeClick) {
           onNodeClick(entity);
         }
         setSelectedNode({
           id: String(data.id || ''),
           name: String(data.name || ''),
-          category: (data.category as EntityType) || 'entity',
+          category: entityType,
           value: Number(data.value || 0.5),
           description: data.description as string | undefined,
         });
       }
     });
 
-    chartInstance.current.off('mouseover');
-    chartInstance.current.on('mouseover', (params: Record<string, unknown>) => {
+    chart.off('mouseover');
+    chart.on('mouseover', (params: Record<string, unknown>) => {
       if (params.dataType === 'node') {
         const data = params.data as Record<string, unknown> | undefined;
         if (data) {
+          const entityType = String(data.entityType ?? 'technique') as EntityType;
           setHoveredNode({
             id: String(data.id || ''),
             name: String(data.name || ''),
-            category: (data.category as EntityType) || 'entity',
+            category: entityType,
             value: Number(data.value || 0.5),
             description: data.description as string | undefined,
           });
@@ -292,36 +361,76 @@ export default function DynamicGraphPanel({
       }
     });
 
-    chartInstance.current.off('mouseout');
-    chartInstance.current.on('mouseout', () => {
+    chart.off('mouseout');
+    chart.on('mouseout', () => {
       setHoveredNode(null);
     });
-  }, [graphData, selectedNode, resolvedMode, entities, onNodeClick]);
+  }, [
+    graphData,
+    selectedNode,
+    resolvedMode,
+    entities,
+    onNodeClick,
+    categoriesForSeries,
+    safeSeriesData,
+    safeSeriesLinks,
+  ]);
 
-  const renderGraphRef = useRef(renderGraph);
-  renderGraphRef.current = renderGraph;
-
-  useEffect(() => {
-    if (chartRef.current && graphData.nodes.length > 0) {
-      if (!chartInstance.current) {
-        chartInstance.current = echarts.init(chartRef.current);
+  useLayoutEffect(() => {
+    if (graphData.nodes.length === 0) {
+      if (chartInstance.current) {
+        try {
+          chartInstance.current.dispose();
+        } catch {
+          /* disposed */
+        }
+        chartInstance.current = null;
       }
-      renderGraphRef.current();
+      return;
     }
 
+    try {
+      applyChartOption();
+    } catch (err) {
+      console.warn('DynamicGraphPanel: ECharts 更新失败', err);
+      try {
+        chartInstance.current?.dispose();
+      } catch {
+        /* ignore */
+      }
+      chartInstance.current = null;
+      // 兜底：若力导布局在某些数据组合下异常，自动降级到 circular，避免首条/第二条直接白屏
+      try {
+        applyChartOption('circular');
+      } catch (fallbackErr) {
+        console.warn('DynamicGraphPanel: fallback circular 布局也失败', fallbackErr);
+      }
+    }
+  }, [graphData, applyChartOption]);
+
+  useEffect(() => {
     return () => {
       if (chartInstance.current) {
         chartInstance.current.dispose();
         chartInstance.current = null;
       }
     };
+  }, []);
+
+  useEffect(() => {
+    setSelectedNode((prev) => {
+      if (!prev) return null;
+      return graphData.nodes.some((n) => n.id === prev.id) ? prev : null;
+    });
+    setHoveredNode((prev) => {
+      if (!prev) return null;
+      return graphData.nodes.some((n) => n.id === prev.id) ? prev : null;
+    });
   }, [graphData]);
 
   useEffect(() => {
     const handleResize = () => {
-      if (chartInstance.current) {
-        chartInstance.current.resize();
-      }
+      chartInstance.current?.resize();
     };
 
     const handleFullscreenChange = () => {
@@ -335,50 +444,40 @@ export default function DynamicGraphPanel({
       window.removeEventListener('resize', handleResize);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
-  }, [renderGraph]);
+  }, []);
 
   useEffect(() => {
-    const observer = new MutationObserver(() => {
-      renderGraph();
+    const el = chartRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      chartInstance.current?.resize();
     });
-
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['class'],
-    });
-
-    return () => observer.disconnect();
-  }, [renderGraph]);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [graphData.nodes.length]);
 
   const handleZoomIn = () => {
-    if (chartInstance.current) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const option = chartInstance.current.getOption() as any;
-      const zoom = (option.series[0].zoom || 1) * 1.2;
-      chartInstance.current.setOption({
-        series: [{ zoom }],
-      });
-    }
+    if (!chartInstance.current) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const option = chartInstance.current.getOption() as any;
+    const s0 = option?.series?.[0] as Record<string, unknown> | undefined;
+    const zoom = Number(s0?.zoom ?? 1) * 1.2;
+    chartInstance.current.setOption({ series: [{ zoom }] }, false, true);
   };
 
   const handleZoomOut = () => {
-    if (chartInstance.current) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const option = chartInstance.current.getOption() as any;
-      const zoom = (option.series[0].zoom || 1) / 1.2;
-      chartInstance.current.setOption({
-        series: [{ zoom: Math.max(zoom, 0.3) }],
-      });
-    }
+    if (!chartInstance.current) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const option = chartInstance.current.getOption() as any;
+    const s0 = option?.series?.[0] as Record<string, unknown> | undefined;
+    const zoom = Math.max(Number(s0?.zoom ?? 1) / 1.2, 0.3);
+    chartInstance.current.setOption({ series: [{ zoom }] }, false, true);
   };
 
   const handleReset = () => {
-    if (chartInstance.current) {
-      chartInstance.current.setOption({
-        series: [{ zoom: 1, center: undefined }],
-      });
-      setSelectedNode(null);
-    }
+    if (!chartInstance.current) return;
+    chartInstance.current.setOption({ series: [{ zoom: 1, center: undefined }] }, false, true);
+    setSelectedNode(null);
   };
 
   const handleFullscreen = () => {
